@@ -1,15 +1,16 @@
 import discord
 from discord.ext import tasks, commands
 import requests
+import os
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ----------------- [개인 설정] -----------------
-TOKEN = "secret"
+TOKEN = "os.getenv("TOKEN")"
 CHANNEL_ID = 1521217489134948433
-SEARCH_KEYWORD = "ord"  
+SEARCH_KEYWORD = "fatega"  
 # ----------------------------------------------
 
 previous_games = {} 
