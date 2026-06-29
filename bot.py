@@ -10,7 +10,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ----------------- [렌더 가상 서버용 안전 설정] -----------------
 TOKEN = os.getenv("TOKEN")          
-CHANNEL_ID = 1521217489134948433  
+CHANNEL_ID = 1521217489134948433
 SEARCH_KEYWORD = "fatega"               
 # -------------------------------------------------------------
 
