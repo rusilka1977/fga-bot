@@ -46,7 +46,7 @@ async def on_ready():
             print(f"로그인 인사말 디코 발송 실패: {e}")
     monitor_gamelist.start()
 
-@tasks.loop(seconds=10)
+@tasks.loop(seconds=5)
 async def monitor_gamelist():
     global previous_games, is_first_run, notified_milestones
     channel = bot.get_channel(CHANNEL_ID)
