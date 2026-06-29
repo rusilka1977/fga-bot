@@ -10,10 +10,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ----------------- [개인 설정] -----------------
 TOKEN = "os.getenv("TOKEN")"
 CHANNEL_ID = 1521217489134948433
-SEARCH_KEYWORD = "fatega"  
+SEARCH_KEYWORD = "fatega"
 # ----------------------------------------------
 
-previous_games = {} 
+previous_games = {}
 is_first_run = True
 
 @bot.event
