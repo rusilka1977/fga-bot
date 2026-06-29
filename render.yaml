@@ -1,0 +1,6 @@
+services:
+  - type: worker
+    name: fga-wc3-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
