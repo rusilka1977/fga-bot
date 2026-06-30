@@ -38,7 +38,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 TOKEN = os.getenv("TOKEN")          
-CHANNEL_ID = 1521341044942180434 
+CHANNEL_ID = 1521341044942180434  # 🔥 [변경] 요청하신 새 채널 ID로 수정 완료!
 SEARCH_KEYWORD = "fatega"               
 
 previous_games = {} 
@@ -47,8 +47,8 @@ is_first_run = True
 
 # ★ 메시지 추적 장부
 created_room_messages = {}
-finished_room_messages = {} 
 milestone_messages = {} 
+finished_room_by_host = {}
 
 def get_now_strings():
     kst = timezone(timedelta(hours=9))
@@ -65,7 +65,7 @@ async def on_ready():
         try:
             embed = discord.Embed(
                 title="🤖 워크래프트 3 모니터링 시작",
-                description="FGA bot이 클라우드 서버에서 가동되었습니다.\n• 새 방 🆕 및 인원 알림 📢 (종료 시 즉시 삭제)\n• 인원 알림: 10명 📢 및 11명 🚀 도달 시 알림\n• 게임 시작 🎮 알림 (실시간 시간 경과 업데이트, 1시간 10분 후 삭제)\n• 방 폭파 💥 알림 (**20분 후 자동 삭제** ⏱️)",
+                description="FGA bot이 새 타겟 채널에서 가동되었습니다.\n• 대기실 동기화 주기: 5초 (초고속 감지) ⚡\n• 새 방 🆕 및 인원 알림 📢 (종료 시 즉시 삭제)\n• 인원 알림: 10명 📢 및 11명 🚀 도달 시 알림\n• 중복 방장 자동 청소 (방장명이 같으면 이전 판 무조건 삭제) 🧹\n• 게임 시작 🎮 알림 (실시간 진행 시간 표시, 1시간 10분 후 삭제)\n• 방 폭파 💥 알림 (10분 후 자동 삭제 ⏱️)",
                 color=0x3498db
             )
             embed.set_footer(text=f"가동 시각: {text_time}")
@@ -76,10 +76,10 @@ async def on_ready():
     monitor_gamelist.start()
     update_elapsed_time.start() 
 
-@tasks.loop(seconds=10)
+@tasks.loop(seconds=5)
 async def monitor_gamelist():
     global previous_games, is_first_run, notified_milestones
-    global created_room_messages, milestone_messages, finished_room_messages
+    global created_room_messages, milestone_messages, finished_room_by_host
     channel = bot.get_channel(CHANNEL_ID)
     if not channel:
         return
@@ -120,7 +120,7 @@ async def monitor_gamelist():
         if is_first_run:
             previous_games = current_games
             is_first_run = False
-            print(f"★ 모니터링 가동 중... 현재 대기실 기준점 설정 완료.")
+            print(f"★ 모니터링 가동 중... 새 채널에서 5초 주기 감지 시작.")
             return
 
         # [사라진 방 감지]
@@ -150,31 +150,27 @@ async def monitor_gamelist():
             text_time, now_obj = get_now_strings()
             
             if last_slots == 12:
-                # 게임 시작 메시지: 기존처럼 1시간 10분(4200초) 유지 및 1분마다 갱신
                 msg = f"🎮 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 12명 풀방으로 **게임을 시작했습니다!**"
                 embed = discord.Embed(description=msg, color=0x3498db)
                 embed.set_footer(text=f"시작 시각: {text_time} (0분 경과)")
                 try: 
                     sent_fin_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=4200)
-                    finished_room_messages[g_id] = {
+                    finished_room_by_host[room_host] = {
                         "message": sent_fin_msg,
                         "start_time": now_obj,
-                        "host": room_host,
                         "name": clean_name,
                         "type": "start"
                     }
                 except: pass
             else:
-                # [수정] 방폭 메시지: 요청하신 대로 딱 20분(1200초) 뒤에 폭파되도록 단축!
                 msg = f"💥 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 **폭파되었거나 대기실이 닫혔습니다.** ({last_slots}/12)"
                 embed = discord.Embed(description=msg, color=0xe74c3c)
-                embed.set_footer(text=f"폭파 시각: {text_time} (20분 후 삭제)")
+                embed.set_footer(text=f"폭파 시각: {text_time} (10분 후 삭제)")
                 try: 
-                    sent_fin_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=1200)
-                    finished_room_messages[g_id] = {
+                    sent_fin_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=600)
+                    finished_room_by_host[room_host] = {
                         "message": sent_fin_msg,
                         "start_time": now_obj,
-                        "host": room_host,
                         "name": clean_name,
                         "type": "explode"
                     }
@@ -186,19 +182,20 @@ async def monitor_gamelist():
             name = game_info['name']
             current = game_info['current_slots']
             max_slots = game_info['max_slots']
+            room_host = game_info['host']
             
             text_time, now_obj = get_now_strings()
             
             if g_id not in previous_game_ids:
-                if g_id in finished_room_messages:
+                if room_host in finished_room_by_host:
                     try:
-                        await finished_room_messages[g_id]["message"].delete()
-                        print(f"[중복 방장 청소] {name}의 이전 판 결과 메시지를 조기 삭제했습니다.")
+                        await finished_room_by_host[room_host]["message"].delete()
+                        print(f"[중복 방장 청소] 방장 {room_host}의 이전 판 결과 메시지를 조기 삭제했습니다.")
                     except: pass
-                    finally: del finished_room_messages[g_id]
+                    finally: del finished_room_by_host[room_host]
 
-                msg = f"🆕 **새 대기실 생성!**\n방 제목: {name} | 맵: {game_info['map']} | 방장: {game_info['host']} ({current}/{max_slots})"
-                embed = discord.Embed(title="🆕 새 대기실 생성!", description=f"**방 제목:** {name}\n• 맵: `{game_info['map']}`\n• 방장: {game_info['host']} ({current}/{max_slots})", color=0x2ecc71)
+                msg = f"🆕 **새 대기실 생성!**\n방 제목: {name} | 맵: {game_info['map']} | 방장: {room_host} ({current}/{max_slots})"
+                embed = discord.Embed(title="🆕 새 대기실 생성!", description=f"**방 제목:** {name}\n• 맵: `{game_info['map']}`\n• 방장: {room_host} ({current}/{max_slots})", color=0x2ecc71)
                 embed.set_footer(text=f"생성 시각: {text_time} (방 종료 시 삭제)")
                 try: 
                     sent_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
@@ -233,38 +230,34 @@ async def monitor_gamelist():
 # 1분마다 시작 메시지 경과 시간 수정하는 루프
 @tasks.loop(minutes=1)
 async def update_elapsed_time():
-    global finished_room_messages
+    global finished_room_by_host
     text_time, now_obj = get_now_strings()
     
-    targets = list(finished_room_messages.keys())
-    for g_id in targets:
-        room_data = finished_room_messages.get(g_id)
+    hosts = list(finished_room_by_host.keys())
+    for room_host in hosts:
+        room_data = finished_room_by_host.get(room_host)
         if not room_data:
             continue
             
-        # 폭파된 방(explode) 처리 이중 안전장치
         if room_data["type"] == "explode":
             start_time = room_data["start_time"]
             elapsed_delta = now_obj - start_time
-            # 폭파된 방은 20분이 지나면 장부에서 알아서 제거 (디코가 지웠을 타이밍)
-            if int(elapsed_delta.total_seconds() // 60) >= 20:
-                if g_id in finished_room_messages:
-                    del finished_room_messages[g_id]
+            if int(elapsed_delta.total_seconds() // 60) >= 10:
+                if room_host in finished_room_by_host:
+                    del finished_room_by_host[room_host]
             continue 
             
-        # 시작된 방(start) 실시간 분 단위 갱신
         try:
             msg_obj = room_data["message"]
             start_time = room_data["start_time"]
-            room_host = room_data["host"]
             clean_name = room_data["name"]
             
             elapsed_delta = now_obj - start_time
             elapsed_minutes = int(elapsed_delta.total_seconds() // 60)
             
             if elapsed_minutes >= 70:
-                if g_id in finished_room_messages:
-                    del finished_room_messages[g_id]
+                if room_host in finished_room_by_host:
+                    del finished_room_by_host[room_host]
                 continue
             
             msg = f"🎮 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 12명 풀방으로 **게임을 시작했습니다!**"
@@ -276,8 +269,8 @@ async def update_elapsed_time():
             await msg_obj.edit(embed=new_embed)
             
         except discord.errors.NotFound:
-            if g_id in finished_room_messages:
-                del finished_room_messages[g_id]
+            if room_host in finished_room_by_host:
+                del finished_room_by_host[room_host]
         except Exception as e:
             print(f"시간 업데이트 중 예외 발생: {e}")
 
