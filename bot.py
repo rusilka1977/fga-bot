@@ -76,7 +76,7 @@ async def on_ready():
     monitor_gamelist.start()
     update_elapsed_time.start() 
 
-@tasks.loop(seconds=5)
+@tasks.loop(seconds=10)
 async def monitor_gamelist():
     global previous_games, is_first_run, notified_milestones
     global created_room_messages, milestone_messages, finished_room_messages
