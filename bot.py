@@ -38,8 +38,8 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 TOKEN = os.getenv("TOKEN")          
-CHANNEL_ID = 1521341044942180434   
-SEARCH_KEYWORD = "fatega"             
+CHANNEL_ID = 1521341044942180434 
+SEARCH_KEYWORD = "fatega"               
 
 previous_games = {} 
 notified_milestones = {} 
@@ -48,8 +48,6 @@ is_first_run = True
 # ★ 메시지 추적 장부
 created_room_messages = {}
 finished_room_messages = {} 
-
-# [수정] 10명, 11명 알림 메시지를 방마다 여러 개 저장할 수 있도록 리스트 형태로 장부를 관리합니다.
 milestone_messages = {} 
 
 def get_now_strings():
@@ -67,7 +65,7 @@ async def on_ready():
         try:
             embed = discord.Embed(
                 title="🤖 워크래프트 3 모니터링 시작",
-                description="FGA bot이 클라우드 서버에서 가동되었습니다.\n• 새 방 🆕 및 인원 알림 📢 (종료 시 즉시 삭제)\n• 인원 알림 조건 변경: **10명 📢 및 11명 🚀 도달 시 각각 알림**\n• 다음 방 생성 시 이전 시작/폭파 메시지 즉시 추적 삭제 🧹\n• 게임 시작 🎮 알림 (1분마다 실시간 진행 경과 업데이트)\n• 폭파 💥 알림 (1시간 10분 후 자동 삭제)",
+                description="FGA bot이 클라우드 서버에서 가동되었습니다.\n• 새 방 🆕 및 인원 알림 📢 (종료 시 즉시 삭제)\n• 인원 알림: 10명 📢 및 11명 🚀 도달 시 알림\n• 게임 시작 🎮 알림 (실시간 시간 경과 업데이트, 1시간 10분 후 삭제)\n• 방 폭파 💥 알림 (**20분 후 자동 삭제** ⏱️)",
                 color=0x3498db
             )
             embed.set_footer(text=f"가동 시각: {text_time}")
@@ -142,7 +140,7 @@ async def monitor_gamelist():
                 except: pass
                 finally: del created_room_messages[g_id]
             
-            # 2. [수정] 해당 방에 쌓였던 인원 알림(10명, 11명) 메시지 싹 다 찾아서 폭파 삭제
+            # 2. 기존 인원 알림(10명, 11명) 삭제
             if g_id in milestone_messages:
                 for msg_obj in milestone_messages[g_id]:
                     try: await msg_obj.delete()
@@ -152,6 +150,7 @@ async def monitor_gamelist():
             text_time, now_obj = get_now_strings()
             
             if last_slots == 12:
+                # 게임 시작 메시지: 기존처럼 1시간 10분(4200초) 유지 및 1분마다 갱신
                 msg = f"🎮 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 12명 풀방으로 **게임을 시작했습니다!**"
                 embed = discord.Embed(description=msg, color=0x3498db)
                 embed.set_footer(text=f"시작 시각: {text_time} (0분 경과)")
@@ -166,11 +165,12 @@ async def monitor_gamelist():
                     }
                 except: pass
             else:
+                # [수정] 방폭 메시지: 요청하신 대로 딱 20분(1200초) 뒤에 폭파되도록 단축!
                 msg = f"💥 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 **폭파되었거나 대기실이 닫혔습니다.** ({last_slots}/12)"
                 embed = discord.Embed(description=msg, color=0xe74c3c)
-                embed.set_footer(text=f"폭파 시각: {text_time} (1시간 10분 후 삭제)")
+                embed.set_footer(text=f"폭파 시각: {text_time} (20분 후 삭제)")
                 try: 
-                    sent_fin_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=4200)
+                    sent_fin_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=1200)
                     finished_room_messages[g_id] = {
                         "message": sent_fin_msg,
                         "start_time": now_obj,
@@ -205,25 +205,22 @@ async def monitor_gamelist():
                     created_room_messages[g_id] = sent_msg
                 except: pass
             
-            # [수정] 10명 혹은 11명 도달 감지 시스템
+            # [10명 혹은 11명 도달 감지]
             if current in [10, 11]:
-                # 해당 방에서 이 인원(10 혹은 11)에 대해 알림을 준 적이 없을 때만 발송
                 if notified_milestones.get(g_id) != current:
                     notified_milestones[g_id] = current
                     
                     if current == 10:
                         msg = f"📢 **🚀 인원 도달 알림!**\n**[{name}]** 대기실에 현재 **10명**이 모였습니다! 즉시 접속을 준비하세요! ({current}/{max_slots})"
                         embed = discord.Embed(description=msg, color=0xf1c40f)
-                    else:  # 11명일 때
+                    else: 
                         msg = f"🚨 **🔥 막차 탑승 경보!**\n**[{name}]** 대기실이 현재 **11명**입니다! **마지막 딱 한 자리** 남았습니다! ({current}/{max_slots})"
-                        embed = discord.Embed(description=msg, color=0xe67e22) # 주황색 강조
+                        embed = discord.Embed(description=msg, color=0xe67e22) 
                         
                     embed.set_footer(text=f"감지 시각: {text_time} (방 종료 시 삭제)")
                     
                     try: 
                         sent_milestone_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
-                        
-                        # 장부에 이 방의 알림 메시지 객체 축적 (나중에 통째로 지우기 위함)
                         if g_id not in milestone_messages:
                             milestone_messages[g_id] = []
                         milestone_messages[g_id].append(sent_milestone_msg)
@@ -233,7 +230,7 @@ async def monitor_gamelist():
     except Exception as e:
         print(f"루프 내 에러 발생: {e}")
 
-# 1분마다 켜져 있는 시작 메시지들의 하단 문구를 수정하는 루프
+# 1분마다 시작 메시지 경과 시간 수정하는 루프
 @tasks.loop(minutes=1)
 async def update_elapsed_time():
     global finished_room_messages
@@ -242,9 +239,20 @@ async def update_elapsed_time():
     targets = list(finished_room_messages.keys())
     for g_id in targets:
         room_data = finished_room_messages.get(g_id)
-        if not room_data or room_data["type"] != "start":
+        if not room_data:
+            continue
+            
+        # 폭파된 방(explode) 처리 이중 안전장치
+        if room_data["type"] == "explode":
+            start_time = room_data["start_time"]
+            elapsed_delta = now_obj - start_time
+            # 폭파된 방은 20분이 지나면 장부에서 알아서 제거 (디코가 지웠을 타이밍)
+            if int(elapsed_delta.total_seconds() // 60) >= 20:
+                if g_id in finished_room_messages:
+                    del finished_room_messages[g_id]
             continue 
             
+        # 시작된 방(start) 실시간 분 단위 갱신
         try:
             msg_obj = room_data["message"]
             start_time = room_data["start_time"]
@@ -266,7 +274,6 @@ async def update_elapsed_time():
             new_embed.set_footer(text=f"시작 시각: {orig_time_str} ({elapsed_minutes}분 경과 🔥)")
             
             await msg_obj.edit(embed=new_embed)
-            print(f"[시간 업데이트] {clean_name} -> {elapsed_minutes}분 경과로 수정됨.")
             
         except discord.errors.NotFound:
             if g_id in finished_room_messages:
