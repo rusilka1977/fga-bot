@@ -45,6 +45,10 @@ previous_games = {}
 notified_milestones = {} 
 is_first_run = True
 
+# ★ 메시지들을 추적하기 위한 장부 (방 생성 메시지 & 10명 알림 메시지 저장)
+created_room_messages = {}
+ten_players_messages = {}
+
 def get_now_strings():
     kst = timezone(timedelta(hours=9))
     now = datetime.now(kst)
@@ -60,7 +64,7 @@ async def on_ready():
         try:
             embed = discord.Embed(
                 title="🤖 워크래프트 3 모니터링 시작",
-                description="FGA bot이 클라우드 서버에서 가동되었습니다.\n• 새 대기실 생성 알림 (6시간 후 자동 삭제) 🆕\n• 12인 풀방 시작/방폭 감지 (1시간 후 자동 삭제) 🎮💥\n• 10명 대기실 인원 알림 (1시간 후 자동 삭제) 📢",
+                description="FGA bot이 클라우드 서버에서 가동되었습니다.\n• 새 방 🆕 및 10명 알림 📢 (방폭/시작 시 즉시 연동 삭제)\n• 시작 🎮 및 폭파 💥 알림 (1시간 10분 후 자동 삭제)",
                 color=0x3498db
             )
             embed.set_footer(text=f"가동 시각: {text_time}")
@@ -71,7 +75,7 @@ async def on_ready():
 
 @tasks.loop(seconds=10)
 async def monitor_gamelist():
-    global previous_games, is_first_run, notified_milestones
+    global previous_games, is_first_run, notified_milestones, created_room_messages, ten_players_messages
     channel = bot.get_channel(CHANNEL_ID)
     if not channel:
         return
@@ -112,10 +116,10 @@ async def monitor_gamelist():
         if is_first_run:
             previous_games = current_games
             is_first_run = False
-            print(f"★ 모니터링 가동 중... 현재 대기실 기준점 설정 완료 (기존 방 {len(current_game_ids)}개 기록됨).")
+            print(f"★ 모니터링 가동 중... 현재 대기실 기준점 설정 완료.")
             return
 
-        # [사라진 방 감지] -> 1시간 뒤 자동 삭제 (3600초)
+        # [사라진 방 감지] -> '방 생성' 및 '10명 알림' 세트로 동시 삭제 로직!
         started_games = previous_game_ids - current_game_ids
         for g_id in started_games:
             old_game_info = previous_games[g_id]
@@ -125,21 +129,38 @@ async def monitor_gamelist():
             if g_id in notified_milestones:
                 del notified_milestones[g_id]
             
+            # 1. 기존에 있던 [🆕 새 방 생성 메시지]가 장부에 있다면 삭제
+            if g_id in created_room_messages:
+                try:
+                    await created_room_messages[g_id].delete()
+                    print(f"[연동 삭제] {clean_name} 방 종료로 '생성 알림' 삭제 완료.")
+                except: pass
+                finally: del created_room_messages[g_id]
+            
+            # 2. 기존에 발생했던 [📢 10명 도달 알림 메시지]가 장부에 있다면 함께 삭제
+            if g_id in ten_players_messages:
+                try:
+                    await ten_players_messages[g_id].delete()
+                    print(f"[연동 삭제] {clean_name} 방 종료로 '10명 알림' 삭제 완료.")
+                except: pass
+                finally: del ten_players_messages[g_id]
+            
             text_time, now_obj = get_now_strings()
             
+            # 시작/폭파 메시지는 1시간 10분(4200초) 후 자동 삭제됩니다.
             if last_slots == 12:
                 msg = f"🎮 **[{clean_name}]** 방이 12명 풀방으로 대기를 마치고 **게임을 시작했습니다!**"
                 embed = discord.Embed(description=msg, color=0x3498db)
-                embed.set_footer(text=f"시작 시각: {text_time} (1시간 후 삭제)")
+                embed.set_footer(text=f"시작 시각: {text_time} (1시간 10분 후 삭제)")
                 try: 
-                    await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=3600)
+                    await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=4200)
                 except: pass
             else:
                 msg = f"💥 **[{clean_name}]** 방이 12명을 채우지 못하고 **폭파되었거나 대기실이 닫혔습니다.** ({last_slots}/12)"
                 embed = discord.Embed(description=msg, color=0xe74c3c)
-                embed.set_footer(text=f"폭파 시각: {text_time} (1시간 후 삭제)")
+                embed.set_footer(text=f"폭파 시각: {text_time} (1시간 10분 후 삭제)")
                 try: 
-                    await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=3600)
+                    await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=4200)
                 except: pass
 
         # [새로 파진 방 및 인원 감지]
@@ -151,25 +172,26 @@ async def monitor_gamelist():
             
             text_time, now_obj = get_now_strings()
             
-            # [새 방 생성 알림] -> 6시간 뒤 자동 삭제 기능 추가 완료! (21600초)
+            # [새 방 생성 알림] -> 추적용 장부에 보관
             if g_id not in previous_game_ids:
                 msg = f"🆕 **새 대기실 생성!**\n방 제목: {name} | 맵: {game_info['map']} | 방장: {game_info['host']} ({current}/{max_slots})"
                 embed = discord.Embed(title="🆕 새 대기실 생성!", description=f"**방 제목:** {name}\n• 맵: `{game_info['map']}`\n• 방장: {game_info['host']} ({current}/{max_slots})", color=0x2ecc71)
-                embed.set_footer(text=f"생성 시각: {text_time} (6시간 후 삭제)")
+                embed.set_footer(text=f"생성 시각: {text_time} (방 종료 시 삭제)")
                 try: 
-                    # delete_after=21600 (60초 * 60분 * 6시간) 옵션을 추가했습니다.
-                    await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=21600)
+                    sent_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
+                    created_room_messages[g_id] = sent_msg
                 except: pass
             
-            # [10명 도달 알림] -> 1시간 뒤 자동 삭제 (3600초)
+            # [10명 도달 알림] -> 추적용 장부에 보관 (방 터지면 지워짐)
             if current == 10:
                 if notified_milestones.get(g_id) != current:
                     notified_milestones[g_id] = current
                     msg = f"📢 **🚀 인원 도달 알림!**\n**[{name}]** 대기실에 현재 **10명**이 모였습니다! 즉시 접속을 준비하세요! ({current}/{max_slots})"
                     embed = discord.Embed(description=msg, color=0xf1c40f)
-                    embed.set_footer(text=f"감지 시각: {text_time} (1시간 후 삭제)")
+                    embed.set_footer(text=f"감지 시각: {text_time} (방 종료 시 삭제)")
                     try: 
-                        await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=3600)
+                        sent_ten_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
+                        ten_players_messages[g_id] = sent_ten_msg
                     except: pass
 
         previous_games = current_games
