@@ -3,6 +3,20 @@ import discord
 from discord.ext import tasks, commands
 import requests
 from datetime import datetime, timedelta, timezone
+import threading
+from flask import Flask
+
+# ----------------- [렌더 가상 서버 타임아웃 방지용 가짜 웹서버] -----------------
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    port = int(os.getenv("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+# ------------------------------------------------------------------------
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -10,21 +24,17 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ----------------- [렌더 가상 서버용 안전 설정] -----------------
 TOKEN = os.getenv("TOKEN")          
-CHANNEL_ID = 1521217489134948433
-SEARCH_KEYWORD = "fatega"               
+CHANNEL_ID = 1521217489134948433  
+SEARCH_KEYWORD = ""               
 # -------------------------------------------------------------
 
 previous_games = {} 
 notified_milestones = {} 
 is_first_run = True
 
-# 가상 서버(해외)에서도 한국 시간을 정확하게 구하기 위한 함수
 def get_now_strings():
-    # 렌더 서버가 외국에 있어도 한국 시간(UTC+9)으로 강제 고정합니다.
     kst = timezone(timedelta(hours=9))
     now = datetime.now(kst)
-    
-    # 디코 메시지 본문에 들어갈 시간 (예: 2026-06-30 07:11:15)
     text_time = now.strftime('%Y-%m-%d %H:%M:%S')
     return text_time, now
 
@@ -37,7 +47,7 @@ async def on_ready():
         try:
             embed = discord.Embed(
                 title="🤖 워크래프트 3 모니터링 시작",
-                description="FGA bot이 클라우드 서버에서 가동되었습니다.\n• 12인 풀방 시작/방폭 감지\n• 8명 / 10명 대기실 인원 알림 가동!",
+                description="FGA bot이 클라우드 서버에서 가동되었습니다.\n• 12인 풀방 시작/방폭 감지\n• 10명 대기실 인원 알림 가동!",
                 color=0x3498db
             )
             embed.set_footer(text=f"가동 시각: {text_time}")
@@ -46,7 +56,7 @@ async def on_ready():
             print(f"로그인 인사말 디코 발송 실패: {e}")
     monitor_gamelist.start()
 
-@tasks.loop(seconds=5)
+@tasks.loop(seconds=10)
 async def monitor_gamelist():
     global previous_games, is_first_run, notified_milestones
     channel = bot.get_channel(CHANNEL_ID)
@@ -108,7 +118,7 @@ async def monitor_gamelist():
                 print(f"[게임 시작] {clean_name} (12/12 풀방)")
                 msg = f"🎮 **[{clean_name}]** 방이 12명 풀방으로 대기를 마치고 **게임을 시작했습니다!**"
                 embed = discord.Embed(description=msg, color=0x3498db)
-                embed.set_footer(text=f"시작 시각: {text_time}") # 박스 맨 밑에 시간 표시
+                embed.set_footer(text=f"시작 시각: {text_time}")
                 try: await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
                 except: pass
             else:
@@ -136,11 +146,12 @@ async def monitor_gamelist():
                 try: await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
                 except: pass
             
-            if current in [8, 10]:
+            # 오직 10명일 때만 알림이 가도록 수정 완료!
+            if current == 10:
                 if notified_milestones.get(g_id) != current:
                     notified_milestones[g_id] = current
-                    print(f"[인원 달성] {name} 현재 {current}명!")
-                    msg = f"📢 **🚀 인원 도달 알림!**\n**[{name}]** 대기실에 현재 **{current}명**이 모였습니다! 즉시 접속을 준비하세요! ({current}/{max_slots})"
+                    print(f"[인원 달성] {name} 현재 10명!")
+                    msg = f"📢 **🚀 인원 도달 알림!**\n**[{name}]** 대기실에 현재 **10명**이 모였습니다! 즉시 접속을 준비하세요! ({current}/{max_slots})"
                     embed = discord.Embed(description=msg, color=0xf1c40f)
                     embed.set_footer(text=f"감지 시각: {text_time}")
                     try: await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
@@ -150,4 +161,9 @@ async def monitor_gamelist():
     except Exception as e:
         print(f"루프 내 에러 발생: {e}")
 
-bot.run(TOKEN)
+if __name__ == "__main__":
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    bot.run(TOKEN)
