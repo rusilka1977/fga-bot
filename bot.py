@@ -8,12 +8,9 @@ from flask import Flask
 import time
 
 # ----------------- [설정해 주세요!] -----------------
-# 렌더 대시보드 상단에 있는 내 주소 이름 (예: fga-wc3-bot)을 적어주세요.
-# 실제 주소가 https://fga-wc3-bot.onrender.com 이라면 'fga-wc3-bot' 만 적으면 됩니다.
-RENDER_APP_NAME = "fga-bot"
+RENDER_APP_NAME = "fga-bot" # 본인의 렌더 앱 이름 확인 필수!
 # --------------------------------------------------
 
-# ----------------- [렌더 가상 서버 타임아웃 및 수면 방지 웹서버] -----------------
 app = Flask(__name__)
 
 @app.route('/')
@@ -24,9 +21,7 @@ def run_flask():
     port = int(os.getenv("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# 10분마다 자기 자신에게 신호를 보내 잠들지 않게 방지하는 루틴
 def keep_alive_ping():
-    # 봇이 완전히 켜질 때까지 20초 대기
     time.sleep(20)
     url = f"https://{RENDER_APP_NAME}.onrender.com/"
     while True:
@@ -35,7 +30,7 @@ def keep_alive_ping():
             print(f"[Self-Ping] 서버 생존 신호 전송 완료. 상태코드: {res.status_code}")
         except Exception as e:
             print(f"[Self-Ping] 에러 발생 (무시 가능): {e}")
-        time.sleep(600) # 10분(600초)마다 반복
+        time.sleep(600)
 # ------------------------------------------------------------------------
 
 intents = discord.Intents.default()
@@ -65,7 +60,7 @@ async def on_ready():
         try:
             embed = discord.Embed(
                 title="🤖 워크래프트 3 모니터링 시작",
-                description="FGA bot이 클라우드 서버에서 가동되었습니다.\n• 12인 풀방 시작/방폭 감지\n• 10명 대기실 인원 알림 가동!",
+                description="FGA bot이 클라우드 서버에서 가동되었습니다.\n• 새 대기실 생성 알림 (6시간 후 자동 삭제) 🆕\n• 12인 풀방 시작/방폭 감지 (1시간 후 자동 삭제) 🎮💥\n• 10명 대기실 인원 알림 (1시간 후 자동 삭제) 📢",
                 color=0x3498db
             )
             embed.set_footer(text=f"가동 시각: {text_time}")
@@ -120,7 +115,7 @@ async def monitor_gamelist():
             print(f"★ 모니터링 가동 중... 현재 대기실 기준점 설정 완료 (기존 방 {len(current_game_ids)}개 기록됨).")
             return
 
-        # [사라진 방 감지]
+        # [사라진 방 감지] -> 1시간 뒤 자동 삭제 (3600초)
         started_games = previous_game_ids - current_game_ids
         for g_id in started_games:
             old_game_info = previous_games[g_id]
@@ -135,14 +130,16 @@ async def monitor_gamelist():
             if last_slots == 12:
                 msg = f"🎮 **[{clean_name}]** 방이 12명 풀방으로 대기를 마치고 **게임을 시작했습니다!**"
                 embed = discord.Embed(description=msg, color=0x3498db)
-                embed.set_footer(text=f"시작 시각: {text_time}")
-                try: await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
+                embed.set_footer(text=f"시작 시각: {text_time} (1시간 후 삭제)")
+                try: 
+                    await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=3600)
                 except: pass
             else:
                 msg = f"💥 **[{clean_name}]** 방이 12명을 채우지 못하고 **폭파되었거나 대기실이 닫혔습니다.** ({last_slots}/12)"
                 embed = discord.Embed(description=msg, color=0xe74c3c)
-                embed.set_footer(text=f"폭파 시각: {text_time}")
-                try: await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
+                embed.set_footer(text=f"폭파 시각: {text_time} (1시간 후 삭제)")
+                try: 
+                    await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=3600)
                 except: pass
 
         # [새로 파진 방 및 인원 감지]
@@ -154,20 +151,25 @@ async def monitor_gamelist():
             
             text_time, now_obj = get_now_strings()
             
+            # [새 방 생성 알림] -> 6시간 뒤 자동 삭제 기능 추가 완료! (21600초)
             if g_id not in previous_game_ids:
                 msg = f"🆕 **새 대기실 생성!**\n방 제목: {name} | 맵: {game_info['map']} | 방장: {game_info['host']} ({current}/{max_slots})"
                 embed = discord.Embed(title="🆕 새 대기실 생성!", description=f"**방 제목:** {name}\n• 맵: `{game_info['map']}`\n• 방장: {game_info['host']} ({current}/{max_slots})", color=0x2ecc71)
-                embed.set_footer(text=f"생성 시각: {text_time}")
-                try: await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
+                embed.set_footer(text=f"생성 시각: {text_time} (6시간 후 삭제)")
+                try: 
+                    # delete_after=21600 (60초 * 60분 * 6시간) 옵션을 추가했습니다.
+                    await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=21600)
                 except: pass
             
+            # [10명 도달 알림] -> 1시간 뒤 자동 삭제 (3600초)
             if current == 10:
                 if notified_milestones.get(g_id) != current:
                     notified_milestones[g_id] = current
                     msg = f"📢 **🚀 인원 도달 알림!**\n**[{name}]** 대기실에 현재 **10명**이 모였습니다! 즉시 접속을 준비하세요! ({current}/{max_slots})"
                     embed = discord.Embed(description=msg, color=0xf1c40f)
-                    embed.set_footer(text=f"감지 시각: {text_time}")
-                    try: await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
+                    embed.set_footer(text=f"감지 시각: {text_time} (1시간 후 삭제)")
+                    try: 
+                        await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=3600)
                     except: pass
 
         previous_games = current_games
@@ -175,12 +177,10 @@ async def monitor_gamelist():
         print(f"루프 내 에러 발생: {e}")
 
 if __name__ == "__main__":
-    # 웹서버 스레드 가동
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
     
-    # 렌더 서버 수면 방지용 셀프 핑 스레드 가동
     ping_thread = threading.Thread(target=keep_alive_ping)
     ping_thread.daemon = True
     ping_thread.start()
