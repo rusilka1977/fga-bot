@@ -66,7 +66,7 @@ async def on_ready():
         try:
             embed = discord.Embed(
                 title="🤖 워크래프트 3 모니터링 시작",
-                description="FGA bot이 최적화 모드로 가동되었습니다.\n• 대기실 동기화 주기: 8초 (디코 차단 방지 적용) ⚡\n• 새 방 🆕 및 인원 알림 📢 (종료 시 즉시 삭제)\n• **인원 알림 조건: 10명 도달 시 📢**\n• 중복 방장 자동 청소 (방장명이 같으면 이전 판 무조건 삭제) 🧹\n• 게임 시작 🎮 알림 (실시간 진행 시간 표시, 1시간 10분 후 삭제)\n• 방 폭파 💥 알림 (10분 후 자동 삭제 ⏱️)",
+                description="FGA bot이 방어벽 우회 모드로 가동되었습니다.\n• 동기화 주기: 8초 (우회 헤더 적용) 🛡️\n• 새 방 🆕 및 인원 알림 📢 (종료 시 즉시 삭제)\n• 인원 알림 조건: 10명 도달 시 📢\n• 중복 방장 자동 청소 (방장명이 같으면 이전 판 무조건 삭제) 🧹\n• 게임 시작 🎮 알림 (실시간 시간 표시, 1시간 10분 후 삭제)\n• 방 폭파 💥 알림 (10분 후 자동 삭제 ⏱️)",
                 color=0x3498db
             )
             embed.set_footer(text=f"가동 시각: {text_time}")
@@ -86,9 +86,21 @@ async def monitor_gamelist():
         return
 
     url = "https://api.wc3stats.com/gamelist"
+    
+    # 🔥 [핵심 수정 1] 일반 크롬 브라우저가 접속하는 것처럼 위장하는 헤더 추가
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"
+    }
+
     try:
-        response = requests.get(url)
-        if response.status_code != 200:
+        # 🔥 [핵심 수정 2] timeout을 주어 무한 대기에 빠지거나 튕기는 것 방지
+        response = requests.get(url, headers=headers, timeout=5)
+        
+        # 만약 클라우드플레어 차단 페이지(<script> 태그 등)가 반환되면 예외로 던짐
+        if "challenge-platform" in response.text or response.status_code != 200:
+            print(f"[경고] API 서버 방어벽 감지됨 (상태코드: {response.status_code}). 다음 루프에서 재시도합니다.")
             return
 
         data = response.json()
@@ -121,7 +133,7 @@ async def monitor_gamelist():
         if is_first_run:
             previous_games = current_games
             is_first_run = False
-            print(f"★ 모니터링 가동 중... 8초 주기 안정화 모드 시작.")
+            print(f"★ 모니터링 가동 중... 보안 우회 스캔 시작.")
             return
 
         # [사라진 방 감지]
@@ -135,7 +147,6 @@ async def monitor_gamelist():
             if g_id in notified_milestones:
                 del notified_milestones[g_id]
             
-            # 1. 기존 생성 알림 삭제
             if g_id in created_room_messages:
                 try: 
                     await created_room_messages[g_id].delete()
@@ -143,7 +154,6 @@ async def monitor_gamelist():
                 except: pass
                 finally: del created_room_messages[g_id]
             
-            # 2. 기존 인원 알림(10명) 삭제
             if g_id in milestone_messages:
                 for msg_obj in milestone_messages[g_id]:
                     try: 
@@ -211,7 +221,6 @@ async def monitor_gamelist():
                     await asyncio.sleep(0.5)
                 except: pass
             
-            # 🔥 [변경] 11명 조건문을 삭제하고 딱 10명일 때만 알림이 가도록 단순화했습니다.
             if current == 10:
                 if notified_milestones.get(g_id) != current:
                     notified_milestones[g_id] = current
@@ -230,7 +239,8 @@ async def monitor_gamelist():
 
         previous_games = current_games
     except Exception as e:
-        print(f"루프 내 에러 발생: {e}")
+        # 🔥 [핵심 수정 3] 에러가 발생해도 봇이 완전히 뻗지(Exit) 않고 로그만 남긴 뒤 다음 루프로 넘어가게 방어
+        print(f"[루프 예외 발생 (자동 통과)]: {e}")
 
 # 1분마다 시작 메시지 경과 시간 수정하는 루프
 @tasks.loop(minutes=1)
