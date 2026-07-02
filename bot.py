@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import threading
 from flask import Flask
 import time
+import asyncio
 
 # ----------------- [설정해 주세요!] -----------------
 RENDER_APP_NAME = "fga-bot" # 본인의 렌더 앱 이름 확인 필수!
@@ -38,7 +39,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 TOKEN = os.getenv("TOKEN")          
-CHANNEL_ID = 1521341044942180434  # 🔥 [변경] 요청하신 새 채널 ID로 수정 완료!
+CHANNEL_ID = 1521341044942180434  
 SEARCH_KEYWORD = "fatega"               
 
 previous_games = {} 
@@ -65,7 +66,7 @@ async def on_ready():
         try:
             embed = discord.Embed(
                 title="🤖 워크래프트 3 모니터링 시작",
-                description="FGA bot이 새 타겟 채널에서 가동되었습니다.\n• 대기실 동기화 주기: 5초 (초고속 감지) ⚡\n• 새 방 🆕 및 인원 알림 📢 (종료 시 즉시 삭제)\n• 인원 알림: 10명 📢 및 11명 🚀 도달 시 알림\n• 중복 방장 자동 청소 (방장명이 같으면 이전 판 무조건 삭제) 🧹\n• 게임 시작 🎮 알림 (실시간 진행 시간 표시, 1시간 10분 후 삭제)\n• 방 폭파 💥 알림 (10분 후 자동 삭제 ⏱️)",
+                description="FGA bot이 최적화 모드로 가동되었습니다.\n• 대기실 동기화 주기: 8초 (디코 차단 방지 적용) ⚡\n• 새 방 🆕 및 인원 알림 📢 (종료 시 즉시 삭제)\n• **인원 알림 조건: 10명 도달 시 📢**\n• 중복 방장 자동 청소 (방장명이 같으면 이전 판 무조건 삭제) 🧹\n• 게임 시작 🎮 알림 (실시간 진행 시간 표시, 1시간 10분 후 삭제)\n• 방 폭파 💥 알림 (10분 후 자동 삭제 ⏱️)",
                 color=0x3498db
             )
             embed.set_footer(text=f"가동 시각: {text_time}")
@@ -76,7 +77,7 @@ async def on_ready():
     monitor_gamelist.start()
     update_elapsed_time.start() 
 
-@tasks.loop(seconds=5)
+@tasks.loop(seconds=8)
 async def monitor_gamelist():
     global previous_games, is_first_run, notified_milestones
     global created_room_messages, milestone_messages, finished_room_by_host
@@ -120,7 +121,7 @@ async def monitor_gamelist():
         if is_first_run:
             previous_games = current_games
             is_first_run = False
-            print(f"★ 모니터링 가동 중... 새 채널에서 5초 주기 감지 시작.")
+            print(f"★ 모니터링 가동 중... 8초 주기 안정화 모드 시작.")
             return
 
         # [사라진 방 감지]
@@ -136,14 +137,18 @@ async def monitor_gamelist():
             
             # 1. 기존 생성 알림 삭제
             if g_id in created_room_messages:
-                try: await created_room_messages[g_id].delete()
+                try: 
+                    await created_room_messages[g_id].delete()
+                    await asyncio.sleep(0.5)
                 except: pass
                 finally: del created_room_messages[g_id]
             
-            # 2. 기존 인원 알림(10명, 11명) 삭제
+            # 2. 기존 인원 알림(10명) 삭제
             if g_id in milestone_messages:
                 for msg_obj in milestone_messages[g_id]:
-                    try: await msg_obj.delete()
+                    try: 
+                        await msg_obj.delete()
+                        await asyncio.sleep(0.5)
                     except: pass
                 del milestone_messages[g_id]
             
@@ -161,6 +166,7 @@ async def monitor_gamelist():
                         "name": clean_name,
                         "type": "start"
                     }
+                    await asyncio.sleep(0.5)
                 except: pass
             else:
                 msg = f"💥 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 **폭파되었거나 대기실이 닫혔습니다.** ({last_slots}/12)"
@@ -174,6 +180,7 @@ async def monitor_gamelist():
                         "name": clean_name,
                         "type": "explode"
                     }
+                    await asyncio.sleep(0.5)
                 except: pass
 
         # [새로 파진 방 및 인원 감지]
@@ -190,6 +197,7 @@ async def monitor_gamelist():
                 if room_host in finished_room_by_host:
                     try:
                         await finished_room_by_host[room_host]["message"].delete()
+                        await asyncio.sleep(0.5)
                         print(f"[중복 방장 청소] 방장 {room_host}의 이전 판 결과 메시지를 조기 삭제했습니다.")
                     except: pass
                     finally: del finished_room_by_host[room_host]
@@ -200,20 +208,16 @@ async def monitor_gamelist():
                 try: 
                     sent_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
                     created_room_messages[g_id] = sent_msg
+                    await asyncio.sleep(0.5)
                 except: pass
             
-            # [10명 혹은 11명 도달 감지]
-            if current in [10, 11]:
+            # 🔥 [변경] 11명 조건문을 삭제하고 딱 10명일 때만 알림이 가도록 단순화했습니다.
+            if current == 10:
                 if notified_milestones.get(g_id) != current:
                     notified_milestones[g_id] = current
                     
-                    if current == 10:
-                        msg = f"📢 **🚀 인원 도달 알림!**\n**[{name}]** 대기실에 현재 **10명**이 모였습니다! 즉시 접속을 준비하세요! ({current}/{max_slots})"
-                        embed = discord.Embed(description=msg, color=0xf1c40f)
-                    else: 
-                        msg = f"🚨 **🔥 막차 탑승 경보!**\n**[{name}]** 대기실이 현재 **11명**입니다! **마지막 딱 한 자리** 남았습니다! ({current}/{max_slots})"
-                        embed = discord.Embed(description=msg, color=0xe67e22) 
-                        
+                    msg = f"📢 **🚀 인원 도달 알림!**\n**[{name}]** 대기실에 현재 **10명**이 모였습니다! 즉시 접속을 준비하세요! ({current}/{max_slots})"
+                    embed = discord.Embed(description=msg, color=0xf1c40f)
                     embed.set_footer(text=f"감지 시각: {text_time} (방 종료 시 삭제)")
                     
                     try: 
@@ -221,6 +225,7 @@ async def monitor_gamelist():
                         if g_id not in milestone_messages:
                             milestone_messages[g_id] = []
                         milestone_messages[g_id].append(sent_milestone_msg)
+                        await asyncio.sleep(0.5)
                     except: pass
 
         previous_games = current_games
@@ -267,6 +272,7 @@ async def update_elapsed_time():
             new_embed.set_footer(text=f"시작 시각: {orig_time_str} ({elapsed_minutes}분 경과 🔥)")
             
             await msg_obj.edit(embed=new_embed)
+            await asyncio.sleep(0.8)
             
         except discord.errors.NotFound:
             if room_host in finished_room_by_host:
