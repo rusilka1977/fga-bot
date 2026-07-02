@@ -40,7 +40,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 TOKEN = os.getenv("TOKEN")          
 CHANNEL_ID = 1521217489134948433  
-SEARCH_KEYWORD = "ord"               
+SEARCH_KEYWORD = "war"               
 
 previous_games = {} 
 is_first_run = True
