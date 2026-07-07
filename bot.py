@@ -39,7 +39,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 TOKEN = os.getenv("TOKEN")          
-CHANNEL_ID = 1521217489134948433
+CHANNEL_ID = 1521341044942180434
 SEARCH_KEYWORD = "fatega"               
 
 previous_games = {}
