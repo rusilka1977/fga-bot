@@ -39,15 +39,15 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 TOKEN = os.getenv("TOKEN")          
-CHANNEL_ID = 1521341044942180434  
+CHANNEL_ID = 1521217489134948433
 SEARCH_KEYWORD = "fatega"               
 
-previous_games = {} 
+previous_games = {}
 is_first_run = True
 
 # ★ 메시지 추적 장부
 created_room_messages = {}
-finished_room_by_host = {}
+finished_room_hosts = set() # 중복 생성 방지용 호스트 목록
 
 def get_now_strings():
     kst = timezone(timedelta(hours=9))
@@ -63,8 +63,8 @@ async def on_ready():
         text_time, now_obj = get_now_strings()
         try:
             embed = discord.Embed(
-                title="🤖 FGA 모니터링 시작",
-                description="• 대기실 스캔 주기: **10초**\n• 인원수 실시간 자동 갱신 중 🔄",
+                title="🤖 FGA 모니터링 시작 (최적화 버전)",
+                description="• 대기실 스캔 주기: **10초**\n• 인원수 실시간 자동 갱신 중 🔄\n• 시작 메시지 유지: **1시간** ⏱️",
                 color=0x2ecc71
             )
             embed.set_footer(text=f"가동 시각: {text_time}")
@@ -73,12 +73,11 @@ async def on_ready():
             print(f"로그인 인사말 디코 발송 실패: {e}")
             
     monitor_gamelist.start()
-    update_elapsed_time.start() 
 
 @tasks.loop(seconds=10)
 async def monitor_gamelist():
     global previous_games, is_first_run
-    global created_room_messages, finished_room_by_host
+    global created_room_messages, finished_room_hosts
     channel = bot.get_channel(CHANNEL_ID)
     if not channel:
         return
@@ -95,7 +94,7 @@ async def monitor_gamelist():
         response = requests.get(url, headers=headers, timeout=5)
         
         if "challenge-platform" in response.text or response.status_code != 200:
-            print(f"[경고] API 서버 보안 인증(Cloudflare) 감지됨. 다음 루프(10초 뒤)에서 재시도합니다.")
+            print(f"[경고] API 서버 통신 실패(Cloudflare 또는 점검). 대기실 장부를 유지합니다.")
             return
 
         data = response.json()
@@ -139,44 +138,36 @@ async def monitor_gamelist():
             last_slots = old_game_info['current_slots'] 
             room_host = old_game_info['host'] 
             
+            # 생성되어 있던 초록색 대기실 메시지 삭제
             if g_id in created_room_messages:
                 try: 
                     await created_room_messages[g_id].delete()
-                    # 🔥 [수정] 대기 시간을 1.0초로 연장
                     await asyncio.sleep(1.0)
                 except: pass
-                finally: del created_room_messages[g_id]
+                finally: 
+                    if g_id in created_room_messages:
+                        del created_room_messages[g_id]
             
             text_time, now_obj = get_now_strings()
             
-            if last_slots == 12:
-                msg = f"🎮 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 12명 풀방으로 **게임을 시작했습니다!**"
+            # 10명 이상 조인한 상태에서 방이 사라지면 시작으로 판정
+            if last_slots >= 10:
+                msg = f"🎮 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 게임을 시작했습니다! ({last_slots}/12)"
                 embed = discord.Embed(description=msg, color=0x3498db)
-                embed.set_footer(text=f"시작 시각: {text_time} (0분 경과)")
+                embed.set_footer(text=f"시작 시각: {text_time} (1시간 후 자동 삭제)")
                 try: 
-                    sent_fin_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=4200)
-                    finished_room_by_host[room_host] = {
-                        "message": sent_fin_msg,
-                        "start_time": now_obj,
-                        "name": clean_name,
-                        "type": "start"
-                    }
-                    # 🔥 [수정] 대기 시간을 1.0초로 연장
+                    # 🔥 [수정] delete_after를 3600초(1시간)로 줄여 디코가 알아서 1시간 뒤 청소하게 만듭니다.
+                    await channel.send(content=f"{msg} (시작: {text_time})", embed=embed, delete_after=3600)
+                    finished_room_hosts.add(room_host)
                     await asyncio.sleep(1.0)
                 except: pass
             else:
                 msg = f"💥 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 **폭파되었거나 대기실이 닫혔습니다.** ({last_slots}/12)"
                 embed = discord.Embed(description=msg, color=0xe74c3c)
-                embed.set_footer(text=f"폭파 시각: {text_time} (5분 후 삭제)")
+                embed.set_footer(text=f"폭파 시각: {text_time} (5분 후 자동 삭제)")
                 try: 
-                    sent_fin_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed, delete_after=300)
-                    finished_room_by_host[room_host] = {
-                        "message": sent_fin_msg,
-                        "start_time": now_obj,
-                        "name": clean_name,
-                        "type": "explode"
-                    }
-                    # 🔥 [수정] 대기 시간을 1.0초로 연장
+                    await channel.send(content=f"{msg} (폭파: {text_time})", embed=embed, delete_after=300) # 5분 후 삭제
+                    finished_room_hosts.add(room_host)
                     await asyncio.sleep(1.0)
                 except: pass
 
@@ -191,13 +182,8 @@ async def monitor_gamelist():
             text_time, now_obj = get_now_strings()
             
             if g_id not in previous_game_ids:
-                if room_host in finished_room_by_host:
-                    try:
-                        await finished_room_by_host[room_host]["message"].delete()
-                        # 🔥 [수정] 대기 시간을 1.0초로 연장
-                        await asyncio.sleep(1.0)
-                    except: pass
-                    finally: del finished_room_by_host[room_host]
+                if room_host in finished_room_hosts:
+                    finished_room_hosts.remove(room_host)
 
                 msg = f"🆕 **새 대기실 생성!**\n방 제목: {name} | 맵: {game_info['map']} | 방장: {room_host} ({current}/{max_slots})"
                 embed = discord.Embed(title="🆕 새 대기실 생성!", description=f"**방 제목:** {name}\n• 맵: `{game_info['map']}`\n• 방장: {room_host} ({current}/{max_slots})", color=0x2ecc71)
@@ -205,11 +191,11 @@ async def monitor_gamelist():
                 try: 
                     sent_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
                     created_room_messages[g_id] = sent_msg
-                    # 🔥 [수정] 대기 시간을 1.0초로 연장
                     await asyncio.sleep(1.0)
                 except: pass
             
             else:
+                # ★ 실시간 인원 갱신 기능은 안전하게 유지됩니다.
                 old_game_info = previous_games[g_id]
                 if old_game_info['current_slots'] != current:
                     if g_id in created_room_messages:
@@ -219,62 +205,13 @@ async def monitor_gamelist():
                             new_embed.set_footer(text=f"인원 갱신: {text_time} (실시간 인원 동기화 중)")
                             
                             await created_room_messages[g_id].edit(content=f"{msg} (갱신: {text_time})", embed=new_embed)
-                            # 🔥 [수정] 대기 시간을 1.0초로 연장
                             await asyncio.sleep(1.0)
                         except: pass
 
         previous_games = current_games
+        
     except Exception as e:
         print(f"[루프 내 예외 발생 (자동 패스)]: {e}")
-
-# 1분마다 시작 메시지 경과 시간 수정하는 루프
-@tasks.loop(minutes=1)
-async def update_elapsed_time():
-    global finished_room_by_host
-    text_time, now_obj = get_now_strings()
-    
-    hosts = list(finished_room_by_host.keys())
-    for room_host in hosts:
-        room_data = finished_room_by_host.get(room_host)
-        if not room_data:
-            continue
-            
-        if room_data["type"] == "explode":
-            start_time = room_data["start_time"]
-            elapsed_delta = now_obj - start_time
-            if int(elapsed_delta.total_seconds() // 60) >= 5:
-                if room_host in finished_room_by_host:
-                    del finished_room_by_host[room_host]
-            continue 
-            
-        try:
-            msg_obj = room_data["message"]
-            start_time = room_data["start_time"]
-            clean_name = room_data["name"]
-            
-            elapsed_delta = now_obj - start_time
-            elapsed_minutes = int(elapsed_delta.total_seconds() // 60)
-            
-            if elapsed_minutes >= 70:
-                if room_host in finished_room_by_host:
-                    del finished_room_by_host[room_host]
-                continue
-            
-            msg = f"🎮 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 12명 풀방으로 **게임을 시작했습니다!**"
-            new_embed = discord.Embed(description=msg, color=0x3498db)
-            
-            orig_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
-            new_embed.set_footer(text=f"시작 시각: {orig_time_str} ({elapsed_minutes}분 경과 🔥)")
-            
-            await msg_obj.edit(embed=new_embed)
-            # 🔥 [수정] 대기 시간을 1.0초로 연장
-            await asyncio.sleep(1.0)
-            
-        except discord.errors.NotFound:
-            if room_host in finished_room_by_host:
-                del finished_room_by_host[room_host]
-        except Exception as e:
-            print(f"시간 업데이트 중 예외 발생: {e}")
 
 if __name__ == "__main__":
     flask_thread = threading.Thread(target=run_flask)
