@@ -1,3 +1,4 @@
+Python
 import os
 import discord
 from discord.ext import tasks, commands
@@ -62,7 +63,6 @@ async def on_ready():
     if channel:
         text_time, now_obj = get_now_strings()
         try:
-            # ✨ 요청하신 대로 깔끔하고 심플하게 다듬은 첫 인사말 메시지
             embed = discord.Embed(
                 title="🤖 FGA 모니터링 가동",
                 description="• 대기실 스캔 주기: **10초**\n• 실시간 인원 동기화 🔄",
@@ -138,15 +138,26 @@ async def monitor_gamelist():
             last_slots = old_game_info['current_slots'] 
             room_host = old_game_info['host'] 
             
-            # 1. 초록색 대기실 메시지 삭제
+            # 1. 초록색 대기실 메시지 우선 삭제
             if g_id in created_room_messages:
                 try: 
                     await created_room_messages[g_id].delete()
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.3)
                 except: pass
                 finally: 
                     if g_id in created_room_messages:
                         del created_room_messages[g_id]
+            
+            # 🔥 [이중 잠금] 타이머 엇갈림 방지: 시작/폭파 메시지를 보내기 직전에도, 
+            # 장부에 이 방장의 이전 메시지가 남아있다면 무조건 먼저 지워버립니다!
+            if room_host in started_room_messages:
+                try:
+                    await started_room_messages[room_host].delete()
+                    await asyncio.sleep(0.3)
+                except: pass
+                finally:
+                    if room_host in started_room_messages:
+                        del started_room_messages[room_host]
             
             text_time, now_obj = get_now_strings()
             
@@ -156,7 +167,6 @@ async def monitor_gamelist():
                 embed = discord.Embed(description=msg, color=0x3498db)
                 embed.set_footer(text=f"시작 시각: {text_time} (1시간 후 자동 삭제)")
                 try: 
-                    # 1시간 후 자동 삭제 타이머 장착 + 장부 저장
                     sent_msg = await channel.send(content=f"{msg} (시작: {text_time})", embed=embed, delete_after=3600)
                     started_room_messages[room_host] = sent_msg
                     await asyncio.sleep(0.5)
@@ -182,16 +192,15 @@ async def monitor_gamelist():
             text_time, now_obj = get_now_strings()
             
             if g_id not in previous_game_ids:
-                # 🔥 같은 방장이 '새 대기실'을 파는 순간, 장부를 뒤져 이전 시작/방폭 알림 메시지를 즉시 칼삭제!
+                # 같은 방장이 '새 대기실'을 파는 순간에도 이전 메시지 칼삭제 (기존 안전장치 유지)
                 if room_host in started_room_messages:
                     try:
                         await started_room_messages[room_host].delete()
-                        print(f"[삭제 성공] 방장 {room_host}의 이전 게임 메시지를 삭제했습니다.")
-                        await asyncio.sleep(0.5)
-                    except Exception as e:
-                        print(f"[삭제 실패 (무시 가능)]: {e}")
+                        await asyncio.sleep(0.3)
+                    except: pass
                     finally:
-                        del started_room_messages[room_host]
+                        if room_host in started_room_messages:
+                            del started_room_messages[room_host]
 
                 msg = f"🆕 **새 대기실 생성!**\n방 제목: {name} | 맵: {game_info['map']} | 방장: {room_host} ({current}/{max_slots})"
                 embed = discord.Embed(title="🆕 새 대기실 생성!", description=f"**방 제목:** {name}\n• 맵: `{game_info['map']}`\n• 방장: {room_host} ({current}/{max_slots})", color=0x2ecc71)
