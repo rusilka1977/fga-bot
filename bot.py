@@ -141,18 +141,17 @@ async def monitor_gamelist():
             if g_id in created_room_messages:
                 try: 
                     await created_room_messages[g_id].delete()
-                    await asyncio.sleep(0.3)
+                    await asyncio.sleep(1.0) # ⏳ 1초 딜레이
                 except: pass
                 finally: 
                     if g_id in created_room_messages:
                         del created_room_messages[g_id]
             
-            # 🔥 [이중 잠금] 타이머 엇갈림 방지: 시작/폭파 메시지를 보내기 직전에도, 
-            # 장부에 이 방장의 이전 메시지가 남아있다면 무조건 먼저 지워버립니다!
+            # 2. 이중 잠금: 시작/폭파 메시지 발송 전 이전 메시지 무조건 선삭제
             if room_host in started_room_messages:
                 try:
                     await started_room_messages[room_host].delete()
-                    await asyncio.sleep(0.3)
+                    await asyncio.sleep(1.0) # ⏳ 1초 딜레이
                 except: pass
                 finally:
                     if room_host in started_room_messages:
@@ -160,7 +159,7 @@ async def monitor_gamelist():
             
             text_time, now_obj = get_now_strings()
             
-            # 2. 시작/폭파 메시지 전송 및 장부(`started_room_messages`)에 등록
+            # 3. 시작/폭파 메시지 전송 및 장부 등록
             if last_slots >= 10:
                 msg = f"🎮 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 게임을 시작했습니다! ({last_slots}/12)"
                 embed = discord.Embed(description=msg, color=0x3498db)
@@ -168,7 +167,7 @@ async def monitor_gamelist():
                 try: 
                     sent_msg = await channel.send(content=f"{msg} (시작: {text_time})", embed=embed, delete_after=3600)
                     started_room_messages[room_host] = sent_msg
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(1.0) # ⏳ 1초 딜레이
                 except: pass
             else:
                 msg = f"💥 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 **폭파되었거나 대기실이 닫혔습니다.** ({last_slots}/12)"
@@ -177,7 +176,7 @@ async def monitor_gamelist():
                 try: 
                     sent_msg = await channel.send(content=f"{msg} (폭파: {text_time})", embed=embed, delete_after=300)
                     started_room_messages[room_host] = sent_msg
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(1.0) # ⏳ 1초 딜레이
                 except: pass
 
         # [새로 파진 방 및 인원 변경 감지]
@@ -191,11 +190,11 @@ async def monitor_gamelist():
             text_time, now_obj = get_now_strings()
             
             if g_id not in previous_game_ids:
-                # 같은 방장이 '새 대기실'을 파는 순간에도 이전 메시지 칼삭제 (기존 안전장치 유지)
+                # 새 대기실을 파는 순간에도 이전 메시지 삭제
                 if room_host in started_room_messages:
                     try:
                         await started_room_messages[room_host].delete()
-                        await asyncio.sleep(0.3)
+                        await asyncio.sleep(1.0) # ⏳ 1초 딜레이
                     except: pass
                     finally:
                         if room_host in started_room_messages:
@@ -207,11 +206,11 @@ async def monitor_gamelist():
                 try: 
                     sent_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
                     created_room_messages[g_id] = sent_msg
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(1.0) # ⏳ 1초 딜레이
                 except: pass
             
             else:
-                # 대기실 인원 실시간 업데이트 기능
+                # 대기실 인원 실시간 업데이트
                 old_game_info = previous_games[g_id]
                 if old_game_info['current_slots'] != current:
                     if g_id in created_room_messages:
@@ -221,7 +220,7 @@ async def monitor_gamelist():
                             new_embed.set_footer(text=f"인원 갱신: {text_time} (실시간 인원 동기화 중)")
                             
                             await created_room_messages[g_id].edit(content=f"{msg} (갱신: {text_time})", embed=new_embed)
-                            await asyncio.sleep(0.5)
+                            await asyncio.sleep(1.0) # ⏳ 1초 딜레이
                         except: pass
 
         previous_games = current_games
