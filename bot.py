@@ -43,7 +43,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 TOKEN = os.getenv("TOKEN")          
-SEARCH_KEYWORD = "ord"               
+SEARCH_KEYWORD = ""               
 
 previous_games = {} 
 is_first_run = True
