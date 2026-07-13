@@ -64,7 +64,7 @@ async def on_ready():
         try:
             embed = discord.Embed(
                 title="🤖 FGA 모니터링 가동",
-                description="• 대기실 스캔 주기: **10초**\n• 실시간 인원 동기화 🔄\n• 엔진 강제 가동 완료 ⚡",
+                description="• 대기실 스캔 주기: **10초**\n• 실시간 인원 동기화 🔄\n• 안정화 부스터 가동 완료 🚀",
                 color=0x2ecc71
             )
             embed.set_footer(text=f"가동 시각: {text_time}")
@@ -78,17 +78,15 @@ async def monitor_gamelist():
     global previous_games, is_first_run
     global created_room_messages, started_room_messages
     
-    # 🔍 디버그 0: 루프 도는지 확인하는 최우선 로그
     print(f"[디버그 루프] {datetime.now().strftime('%H:%M:%S')} - 스캔 시작")
 
-    # 봇이 완전히 로그인되기 전(Ready 상태 전)에는 채널을 찾을 수 없으므로 스킵합니다.
     if not bot.is_ready():
         print("[디버그 루프] 봇이 아직 디스코드에 완전히 로그인되지 않아 대기합니다.")
         return
 
     channel = bot.get_channel(CHANNEL_ID)
     if not channel:
-        print(f"[디버그 에러] 지정된 CHANNEL_ID({CHANNEL_ID})를 찾을 수 없습니다. 봇이 해당 서버에 들어가 있나요?")
+        print(f"[디버그 에러] 지정된 CHANNEL_ID({CHANNEL_ID})를 찾을 수 없습니다.")
         return
 
     url = "https://api.wc3stats.com/gamelist"
@@ -98,20 +96,18 @@ async def monitor_gamelist():
     }
 
     try:
-        response = requests.get(url, headers=headers, timeout=5)
-        print(f"[디버그 API] 응답 코드: {response.status_code}")
+        # 동기 방식의 requests를 비동기 루프를 방해하지 않도록 executor에서 실행 (루프 멈춤 방지 핵심)
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, lambda: requests.get(url, headers=headers, timeout=5))
         
         if "challenge-platform" in response.text or response.status_code != 200:
-            print(f"[경고] API 서버 통신 실패(Cloudflare 우회 차단). 장부를 유지합니다.")
+            print(f"[경고] API 서버 통신 실패(Cloudflare 우회 차단). 다음 주기를 기다립니다.")
             return
 
         data = response.json()
         games = data.get('body', [])
         if not isinstance(games, list):
-            print("[디버그 API] 결과 데이터(body)가 리스트 형태가 아닙니다.")
             return
-
-        print(f"[디버그 API] 현재 워크3 전체 대기실 개수: {len(games)}개")
 
         current_games = {}
         keyword = SEARCH_KEYWORD.lower()
@@ -133,7 +129,7 @@ async def monitor_gamelist():
                     'max_slots': game.get('slotsTotal', 0)
                 }
 
-        print(f"[디버그 필터] 키워드 '{keyword}' 검색된 방 개수: {len(current_games)}개")
+        print(f"[디버그 필터] 전체 방: {len(games)}개 / '{keyword}' 검색된 방: {len(current_games)}개")
 
         current_game_ids = set(current_games.keys())
         previous_game_ids = set(previous_games.keys())
@@ -141,7 +137,8 @@ async def monitor_gamelist():
         if is_first_run:
             previous_games = current_games
             is_first_run = False
-            print(f"★ [성공] 모니터링 기준점이 정상 설정되었습니다. (최초 방 목록 {len(current_games)}개 장부 등록)")
+            print(f"★ [성공] 최초 방 목록 {len(current_games)}개 장부 등록 완료 (초기 구동 폭탄 알림 방지)")
+            return # 첫 실행 시 기존에 있던 수십 개의 방을 한 번에 다 보내면 무조건 차단되므로 첫 스캔은 저장만 하고 넘깁니다.
 
         # [사라진 방 감지]
         started_games = previous_game_ids - current_game_ids
@@ -154,7 +151,7 @@ async def monitor_gamelist():
             if g_id in created_room_messages:
                 try: 
                     await created_room_messages[g_id].delete()
-                    await asyncio.sleep(0.5) 
+                    await asyncio.sleep(0.3) # 레이트 리밋 방지 짧은 대기
                 except: pass
                 finally: 
                     if g_id in created_room_messages:
@@ -168,7 +165,7 @@ async def monitor_gamelist():
             if room_host in started_room_messages:
                 try:
                     await started_room_messages[room_host].delete()
-                    await asyncio.sleep(0.5) 
+                    await asyncio.sleep(0.3)
                 except: pass
                 finally:
                     if room_host in started_room_messages:
@@ -184,7 +181,8 @@ async def monitor_gamelist():
                     sent_msg = await channel.send(content="🎮 **[게임 시작]**", embed=embed, delete_after=3600)
                     started_room_messages[room_host] = sent_msg
                     await asyncio.sleep(0.5) 
-                except: pass
+                except discord.HTTPException as e:
+                    print(f"[디코드 에러] 시작 메시지 송신 실패 (속도 제한 우려): {e}")
             else:
                 msg = f"💥 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 **폭파되었거나 대기실이 닫혔습니다.** ({last_slots}/12)"
                 embed = discord.Embed(description=msg, color=0xe74c3c)
@@ -193,7 +191,8 @@ async def monitor_gamelist():
                     sent_msg = await channel.send(content="💥 **[대기실 폭파]**", embed=embed, delete_after=300)
                     started_room_messages[room_host] = sent_msg
                     await asyncio.sleep(0.5) 
-                except: pass
+                except discord.HTTPException as e:
+                    print(f"[디코드 에러] 폭파 메시지 송신 실패: {e}")
 
         # [새로 파진 방 및 인원 변경 감지]
         for g_id in current_game_ids:
@@ -209,7 +208,7 @@ async def monitor_gamelist():
                 if room_host in started_room_messages:
                     try:
                         await started_room_messages[room_host].delete()
-                        await asyncio.sleep(0.5) 
+                        await asyncio.sleep(0.3) 
                     except: pass
                     finally:
                         if room_host in started_room_messages:
@@ -221,7 +220,8 @@ async def monitor_gamelist():
                     sent_msg = await channel.send(content="🆕 **[대기실 생성]**", embed=embed)
                     created_room_messages[g_id] = sent_msg
                     await asyncio.sleep(0.5) 
-                except: pass
+                except discord.HTTPException as e:
+                    print(f"[디코드 에러] 생성 메시지 송신 실패: {e}")
             
             else:
                 old_game_info = previous_games[g_id]
@@ -232,7 +232,7 @@ async def monitor_gamelist():
                             new_embed.set_footer(text=f"인원 갱신: {text_time} (실시간 동기화)")
                             
                             await created_room_messages[g_id].edit(content="🆕 **[대기실 생성]**", embed=new_embed)
-                            await asyncio.sleep(0.5) 
+                            await asyncio.sleep(0.3) 
                         except: pass
 
         previous_games = current_games
@@ -240,9 +240,8 @@ async def monitor_gamelist():
     except Exception as e:
         print(f"[루프 내 예외 발생]: {e}")
 
-# 💡 강제 시작 함수 추가
 async def main_start():
-    monitor_gamelist.start() # 봇이 켜지자마자 루프를 강제로 시작시킵니다.
+    monitor_gamelist.start()
     await bot.start(TOKEN)
 
 if __name__ == "__main__":
@@ -254,5 +253,4 @@ if __name__ == "__main__":
     ping_thread.daemon = True
     ping_thread.start()
     
-    # 디스코드 루프와 봇을 동시에 안전하게 실행
     asyncio.run(main_start())
