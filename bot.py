@@ -10,6 +10,7 @@ import asyncio
 
 # ----------------- [설정해 주세요!] -----------------
 RENDER_APP_NAME = "fga-bot" # 본인의 렌더 앱 이름 확인 필수!
+CHANNEL_ID = 1521217489134948433  # 채널 ID 고정 (공백 없음)
 # --------------------------------------------------
 
 app = Flask(__name__)
@@ -39,8 +40,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 TOKEN = os.getenv("TOKEN")          
-CHANNEL_ID = 1521217489134948433  
-SEARCH_KEYWORD = "fatega"               
+SEARCH_KEYWORD = "ord"               
 
 previous_games = {} 
 is_first_run = True
@@ -141,17 +141,23 @@ async def monitor_gamelist():
             if g_id in created_room_messages:
                 try: 
                     await created_room_messages[g_id].delete()
-                    await asyncio.sleep(1.0) # ⏳ 1초 딜레이
+                    await asyncio.sleep(1.0) # 1.0초 안전 마진
                 except: pass
                 finally: 
                     if g_id in created_room_messages:
                         del created_room_messages[g_id]
             
+            # 🛡️ 0명 버그 유령방 원천 차단 (0명 이하 무시)
+            if last_slots <= 0:
+                if room_host in started_room_messages:
+                    del started_room_messages[room_host]
+                continue
+
             # 2. 이중 잠금: 시작/폭파 메시지 발송 전 이전 메시지 무조건 선삭제
             if room_host in started_room_messages:
                 try:
                     await started_room_messages[room_host].delete()
-                    await asyncio.sleep(1.0) # ⏳ 1초 딜레이
+                    await asyncio.sleep(1.0) # 1.0초 안전 마진
                 except: pass
                 finally:
                     if room_host in started_room_messages:
@@ -160,23 +166,24 @@ async def monitor_gamelist():
             text_time, now_obj = get_now_strings()
             
             # 3. 시작/폭파 메시지 전송 및 장부 등록
+            # ✨ [롤백] 원래대로 10명 이상이면 시작으로 인정합니다!
             if last_slots >= 10:
                 msg = f"🎮 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 게임을 시작했습니다! ({last_slots}/12)"
                 embed = discord.Embed(description=msg, color=0x3498db)
                 embed.set_footer(text=f"시작 시각: {text_time} (1시간 후 자동 삭제)")
                 try: 
-                    sent_msg = await channel.send(content=f"{msg} (시작: {text_time})", embed=embed, delete_after=3600)
+                    sent_msg = await channel.send(content="🎮 **[게임 시작]**", embed=embed, delete_after=3600)
                     started_room_messages[room_host] = sent_msg
-                    await asyncio.sleep(1.0) # ⏳ 1초 딜레이
+                    await asyncio.sleep(1.0) # 1.0초 안전 마진
                 except: pass
             else:
                 msg = f"💥 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 **폭파되었거나 대기실이 닫혔습니다.** ({last_slots}/12)"
                 embed = discord.Embed(description=msg, color=0xe74c3c)
                 embed.set_footer(text=f"폭파 시각: {text_time} (5분 후 자동 삭제)")
                 try: 
-                    sent_msg = await channel.send(content=f"{msg} (폭파: {text_time})", embed=embed, delete_after=300)
+                    sent_msg = await channel.send(content="💥 **[대기실 폭파]**", embed=embed, delete_after=300)
                     started_room_messages[room_host] = sent_msg
-                    await asyncio.sleep(1.0) # ⏳ 1초 딜레이
+                    await asyncio.sleep(1.0) # 1.0초 안전 마진
                 except: pass
 
         # [새로 파진 방 및 인원 변경 감지]
@@ -190,23 +197,21 @@ async def monitor_gamelist():
             text_time, now_obj = get_now_strings()
             
             if g_id not in previous_game_ids:
-                # 새 대기실을 파는 순간에도 이전 메시지 삭제
                 if room_host in started_room_messages:
                     try:
                         await started_room_messages[room_host].delete()
-                        await asyncio.sleep(1.0) # ⏳ 1초 딜레이
+                        await asyncio.sleep(1.0) # 1.0초 안전 마진
                     except: pass
                     finally:
                         if room_host in started_room_messages:
                             del started_room_messages[room_host]
 
-                msg = f"🆕 **새 대기실 생성!**\n방 제목: {name} | 맵: {game_info['map']} | 방장: {room_host} ({current}/{max_slots})"
                 embed = discord.Embed(title="🆕 새 대기실 생성!", description=f"**방 제목:** {name}\n• 맵: `{game_info['map']}`\n• 방장: {room_host} ({current}/{max_slots})", color=0x2ecc71)
-                embed.set_footer(text=f"생성 시각: {text_time} (실시간 인원 동기화 중)")
+                embed.set_footer(text=f"생성 시각: {text_time} (실시간 동기화)")
                 try: 
-                    sent_msg = await channel.send(content=f"{msg} (확인: {text_time})", embed=embed)
+                    sent_msg = await channel.send(content="🆕 **[대기실 생성]**", embed=embed)
                     created_room_messages[g_id] = sent_msg
-                    await asyncio.sleep(1.0) # ⏳ 1초 딜레이
+                    await asyncio.sleep(1.0) # 1.0초 안전 마진
                 except: pass
             
             else:
@@ -215,12 +220,11 @@ async def monitor_gamelist():
                 if old_game_info['current_slots'] != current:
                     if g_id in created_room_messages:
                         try:
-                            msg = f"🆕 **새 대기실 생성!**\n방 제목: {name} | 맵: {game_info['map']} | 방장: {room_host} ({current}/{max_slots})"
                             new_embed = discord.Embed(title="🆕 새 대기실 생성!", description=f"**방 제목:** {name}\n• 맵: `{game_info['map']}`\n• 방장: {room_host} (**{current}**/{max_slots})", color=0x2ecc71)
-                            new_embed.set_footer(text=f"인원 갱신: {text_time} (실시간 인원 동기화 중)")
+                            new_embed.set_footer(text=f"인원 갱신: {text_time} (실시간 동기화)")
                             
-                            await created_room_messages[g_id].edit(content=f"{msg} (갱신: {text_time})", embed=new_embed)
-                            await asyncio.sleep(1.0) # ⏳ 1초 딜레이
+                            await created_room_messages[g_id].edit(content="🆕 **[대기실 생성]**", embed=new_embed)
+                            await asyncio.sleep(1.0) # 1.0초 안전 마진
                         except: pass
 
         previous_games = current_games
