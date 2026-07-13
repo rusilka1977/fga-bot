@@ -10,17 +10,18 @@ import asyncio
 
 # ----------------- [기본 설정] -----------------
 CHANNEL_ID = 1521217489134948433  
-SEARCH_KEYWORD = "ord"  # 💡 찾고 싶은 키워드 (한글, 영어 대소문자 상관없음)
+SEARCH_KEYWORD = "ord"  # 💡 찾고 싶은 키워드
 # ----------------------------------------------
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "FGA Bot Reset Complete!"
+    return "FGA Bot Server is Running Fine!"
 
 def start_flask_server():
     port = int(os.getenv("PORT", 10000))
+    # use_reloader=False를 주어 메인 프로세스를 방해하지 않음
     app.run(host='0.0.0.0', port=port, threaded=True, use_reloader=False)
 
 intents = discord.Intents.default()
@@ -29,7 +30,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 TOKEN = os.getenv("TOKEN")          
 previous_games = {} 
-is_first_run = True
 created_room_messages = {}     
 
 def get_now_strings():
@@ -39,49 +39,53 @@ def get_now_strings():
 
 @bot.event
 async def on_ready():
-    print(f"⚙️ [초기화 완료] {bot.user.name} 봇이 처음부터 다시 시작합니다.")
+    print(f"⚙️ [구동 완료] {bot.user.name} 봇이 로그인되었습니다.")
+    
+    # 💡 [안전 장치] 비동기 루프가 확실히 실행된 후(on_ready) 스캔 루프를 시작합니다.
+    if not monitor_gamelist.is_running():
+        monitor_gamelist.start()
+        print("[시스템] 대기실 스캔 루프 가동 시작.")
+        
     channel = bot.get_channel(CHANNEL_ID)
     if channel:
         text_time, _ = get_now_strings()
         embed = discord.Embed(
-            title="🔄 FGA 시스템 초기화 완료",
-            description=f"• 감시 키워드: **{SEARCH_KEYWORD}**\n• 새 주소 및 동기화 엔진 리셋 완료",
-            color=0xe67e22
+            title="🔄 FGA 모니터링 시작",
+            description=f"• 감시 키워드: **{SEARCH_KEYWORD}**\n• 에러 복구 및 정상 스캔 모드 가동",
+            color=0x2ecc71
         )
         await channel.send(embed=embed)
 
 @tasks.loop(seconds=10)
 async def monitor_gamelist():
-    global previous_games, is_first_run, created_room_messages
+    global previous_games, created_room_messages
     
     target_keyword = SEARCH_KEYWORD.strip().lower()
-    print(f"[스캔 리포트] {datetime.now().strftime('%H:%M:%S')} -> 키워드 '{target_keyword}' 추적 중")
-
-    if not bot.is_ready():
-        return
+    print(f"[스캔 리포트] {datetime.now().strftime('%H:%M:%S')} -> '{target_keyword}' 검색 중")
 
     channel = bot.get_channel(CHANNEL_ID)
     if not channel:
         return
 
-    # 💡 [핵심 보정] 오피셜 캐시 파이프라인 주소로 변경하여 원본 유실 방지
-    url = "https://api.wc3stats.com/war3/gamelist"
+    # 💡 둘 다 테스트해볼 수 있도록 기본 주소로 복귀 (안되면 /war3/gamelist로 교체 가능)
+    url = "https://api.wc3stats.com/gamelist"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
     try:
         timeout = aiohttp.ClientTimeout(total=5)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url, headers=headers) as response:
+            # 캐시 방지 타임스탬프 추가
+            target_url = f"{url}?t={int(time.time())}"
+            async with session.get(target_url, headers=headers) as response:
                 if response.status != 200:
-                    print(f"[로그] API 서버 응답 에러: {response.status}")
+                    print(f"[로그] API 서버 에러 코드: {response.status}")
                     return
 
                 data = await response.json()
                 games = data.get('body', [])
                 if not isinstance(games, list):
-                    print("[로그] body 데이터가 올바른 리스트 형식이 아닙니다.")
                     return
 
                 current_games = {}
@@ -90,11 +94,10 @@ async def monitor_gamelist():
                     if not isinstance(game, dict):
                         continue
                     
-                    # 제목과 맵 속성을 안전하게 추출
                     name = str(game.get('name', '')).strip()
                     map_name = str(game.get('map', '')).strip()
                     
-                    # 검색어 조건 매칭 (키워드가 비어있으면 모든 방 수집)
+                    # 대소문자 구분 없이 매칭 검사 (키워드가 비어있으면 전체 검색)
                     if not target_keyword or (target_keyword in name.lower()) or (target_keyword in map_name.lower()):
                         host = game.get('host', 'unknown')
                         game_id = f"{host}_{name}"
@@ -106,40 +109,25 @@ async def monitor_gamelist():
                             'max_slots': game.get('slotsTotal', 0)
                         }
 
-                print(f"[필터 데이터] 매칭된 방: {len(current_games)}개 / 배틀넷 전체 방: {len(games)}개")
+                print(f"[필터 데이터] 매칭 방: {len(current_games)}개 / 전체 공방: {len(games)}개")
 
                 current_game_ids = set(current_games.keys())
                 previous_game_ids = set(previous_games.keys())
 
-                # 처음 켰을 때 대기실에 있는 방들 일괄 전송
-                if is_first_run:
-                    is_first_run = False
-                    previous_games = current_games
-                    if current_games:
-                        for g_id, game_info in current_games.items():
-                            embed = discord.Embed(
-                                title="🆕 대기실 발견 (초기화)", 
-                                description=f"**방 제목:** {game_info['name']}\n• 방장: {game_info['host']} ({game_info['current_slots']}/{game_info['max_slots']})", 
-                                color=0x34495e
-                            )
-                            sent_msg = await channel.send(embed=embed)
-                            created_room_messages[g_id] = sent_msg
-                            await asyncio.sleep(0.2)
-                    return
-
-                # [실시간 신규 방 알림]
+                # [새 방 알림]
                 for g_id in current_game_ids:
                     if g_id not in previous_game_ids:
                         game_info = current_games[g_id]
                         embed = discord.Embed(
                             title="🆕 새 대기실 생성!", 
-                            description=f"**방 제목:** {game_info['name']}\n• 맵: `{game_info['map']}`\n• 방장: {game_info['host']} ({game_info['current_slots']}/{game_info['max_slots']})", 
+                            description=f"**방 제목:** {game_info['name']}\n• 방장: {game_info['host']} ({game_info['current_slots']}/{game_info['max_slots']})", 
                             color=0x2ecc71
                         )
-                        sent_msg = await channel.send(embed=embed)
+                        sent_msg = await channel.send(content="🆕 **[대기실 생성]**", embed=embed)
                         created_room_messages[g_id] = sent_msg
+                        await asyncio.sleep(0.2)
 
-                # [시작되거나 없어진 방 정리]
+                # [종료/시작된 방 삭제]
                 started_games = previous_game_ids - current_game_ids
                 for g_id in started_games:
                     if g_id in created_room_messages:
@@ -153,15 +141,13 @@ async def monitor_gamelist():
                 previous_games = current_games
                 
     except Exception as e:
-        print(f"[스캔 오류 발생]: {e}")
-
-async def main_start():
-    monitor_gamelist.start()
-    await bot.start(TOKEN)
+        print(f"[스캔 내부 오류]: {e}")
 
 if __name__ == "__main__":
+    # 1. 웹 서버(Flask)를 단순 백그라운드 스레드로 실행 (독점 방지)
     flask_thread = threading.Thread(target=start_flask_server)
     flask_thread.daemon = True
     flask_thread.start()
     
-    asyncio.run(main_start())
+    # 2. 메인 스레드는 오직 디스코드 비동기 엔진 구동에만 전념
+    bot.run(TOKEN)
