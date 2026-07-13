@@ -27,7 +27,6 @@ def start_flask_server():
 def keep_alive_ping():
     time.sleep(30)
     url = f"https://{RENDER_APP_NAME}.onrender.com/"
-    # 메인 루프 방해 방지를 위해 requests 대신 아주 가벼운 타임아웃 적용
     while True:
         try:
             import requests
@@ -46,7 +45,7 @@ TOKEN = os.getenv("TOKEN")
 SEARCH_KEYWORD = "ord"                
 
 previous_games = {} 
-is_first_run = True
+is_first_run = True  # 첫 구동 확인용
 
 created_room_messages = {}     
 started_room_messages = {}     
@@ -65,7 +64,7 @@ async def on_ready():
         try:
             embed = discord.Embed(
                 title="🤖 FGA 모니터링 가동",
-                description="• 대기실 스캔 주기: **10초**\n• 실시간 인원 동기화 🔄\n• 완전 비동기 aiohttp 락 해제 모드 가동 ⚡",
+                description="• 대기실 스캔 주기: **10초**\n• 실시간 인원 동기화 🔄\n• 첫 로딩 로직 버그 수정 완료 🛠️",
                 color=0x2ecc71
             )
             embed.set_footer(text=f"가동 시각: {text_time}")
@@ -81,7 +80,6 @@ async def monitor_gamelist():
     print(f"[디버그 루프] {datetime.now().strftime('%H:%M:%S')} - 스캔 가동 중")
 
     if not bot.is_ready():
-        print("[디버그 루프] 디스코드 연결 대기 중...")
         return
 
     channel = bot.get_channel(CHANNEL_ID)
@@ -93,24 +91,17 @@ async def monitor_gamelist():
     headers = {
         "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.{rand_val} Safari/537.36",
         "Accept": "application/json, text/plain, */*",
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache"
+        "Cache-Control": "no-cache, no-store, must-revalidate"
     }
 
     try:
-        # 💡 [핵심 패치] 비동기 aiohttp 세션을 생성하여 타임아웃 시 봇이 굳지 않고 탈출하도록 보장
-        timeout = aiohttp.ClientTimeout(total=4) # 4초 안에 응답 안 오면 강제 컷
+        timeout = aiohttp.ClientTimeout(total=5)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             target_url = f"{url}?t={int(time.time())}"
             async with session.get(target_url, headers=headers) as response:
                 
                 if response.status != 200:
-                    print(f"[경고] wc3stats API 접근 거부됨 (상태코드: {response.status})")
-                    return
-                
-                res_text = await response.text()
-                if "challenge-platform" in res_text:
-                    print(f"[경고] Cloudflare 우회 장벽 감지됨.")
+                    print(f"[경고] API 거부 (상태코드: {response.status})")
                     return
 
                 data = await response.json()
@@ -143,10 +134,10 @@ async def monitor_gamelist():
                 current_game_ids = set(current_games.keys())
                 previous_game_ids = set(previous_games.keys())
 
+                # 💡 [버그 수정 핵심] 첫 실행이더라도 return으로 끊지 않고 밑으로 흘려보내서 첫 방 9개를 디코에 전송하게 만듭니다.
                 if is_first_run:
-                    previous_games = current_games
                     is_first_run = False
-                    print(f"[디버그] 초기 기준점 {len(current_games)}개 등록 완료.")
+                    print(f"[디버그] 최초 구동 시 감지된 {len(current_games)}개 방 알림 전송 시작")
 
                 # [방 퇴장/시작/폭파 감지]
                 started_games = previous_game_ids - current_game_ids
@@ -159,7 +150,7 @@ async def monitor_gamelist():
                     if g_id in created_room_messages:
                         try: 
                             await created_room_messages[g_id].delete()
-                            await asyncio.sleep(0.2)
+                            await asyncio.sleep(0.1)
                         except: pass
                         finally:
                             if g_id in created_room_messages: del created_room_messages[g_id]
@@ -171,7 +162,7 @@ async def monitor_gamelist():
                     if room_host in started_room_messages:
                         try: 
                             await started_room_messages[room_host].delete()
-                            await asyncio.sleep(0.2)
+                            await asyncio.sleep(0.1)
                         except: pass
                         finally:
                             if room_host in started_room_messages: del started_room_messages[room_host]
@@ -205,7 +196,7 @@ async def monitor_gamelist():
                         if room_host in started_room_messages:
                             try: 
                                 await started_room_messages[room_host].delete()
-                                await asyncio.sleep(0.2)
+                                await asyncio.sleep(0.1)
                             except: pass
                             finally:
                                 if room_host in started_room_messages: del started_room_messages[room_host]
@@ -215,6 +206,7 @@ async def monitor_gamelist():
                         try:
                             sent_msg = await channel.send(content="🆕 **[대기실 생성]**", embed=embed)
                             created_room_messages[g_id] = sent_msg
+                            await asyncio.sleep(0.2) # 적당한 안전 마진
                         except: pass
                     else:
                         old_info = previous_games[g_id]
@@ -228,8 +220,6 @@ async def monitor_gamelist():
 
                 previous_games = current_games
 
-    except asyncio.TimeoutError:
-        print("[경고] API 서버 응답 지연 발생 (4초 타임아웃 탈출). 다음 주기로 넘어갑니다.")
     except Exception as e:
         print(f"[루프 내 예외 발생]: {e}")
 
