@@ -64,7 +64,7 @@ async def on_ready():
         try:
             embed = discord.Embed(
                 title="🤖 FGA 모니터링 가동",
-                description="• 대기실 스캔 주기: **10초**\n• 실시간 인원 동기화 🔄\n• 안정화 부스터 가동 완료 🚀",
+                description="• 대기실 스캔 주기: **10초**\n• 실시간 인원 동기화 🔄\n• 캐시 서버 우회 부스터 가동 ⚡",
                 color=0x2ecc71
             )
             embed.set_footer(text=f"가동 시각: {text_time}")
@@ -89,14 +89,16 @@ async def monitor_gamelist():
         print(f"[디버그 에러] 지정된 CHANNEL_ID({CHANNEL_ID})를 찾을 수 없습니다.")
         return
 
-    url = "https://api.wc3stats.com/gamelist"
+    # 💡 [핵심 수정] 주소 뒤에 매번 변하는 숫자를 붙여 wc3stats의 가짜 캐시 데이터 전송을 차단합니다.
+    url = f"https://api.wc3stats.com/gamelist?t={int(time.time())}"
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*"
     }
 
     try:
-        # 동기 방식의 requests를 비동기 루프를 방해하지 않도록 executor에서 실행 (루프 멈춤 방지 핵심)
+        # 동기 방식의 requests를 비동기 executor에서 안전하게 실행
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(None, lambda: requests.get(url, headers=headers, timeout=5))
         
@@ -137,8 +139,8 @@ async def monitor_gamelist():
         if is_first_run:
             previous_games = current_games
             is_first_run = False
-            print(f"★ [성공] 최초 방 목록 {len(current_games)}개 장부 등록 완료 (초기 구동 폭탄 알림 방지)")
-            return # 첫 실행 시 기존에 있던 수십 개의 방을 한 번에 다 보내면 무조건 차단되므로 첫 스캔은 저장만 하고 넘깁니다.
+            print(f"★ [성공] 최초 방 목록 {len(current_games)}개 장부 등록 완료 (초기 구동 시 대량 알림 방지)")
+            return 
 
         # [사라진 방 감지]
         started_games = previous_game_ids - current_game_ids
@@ -151,7 +153,7 @@ async def monitor_gamelist():
             if g_id in created_room_messages:
                 try: 
                     await created_room_messages[g_id].delete()
-                    await asyncio.sleep(0.3) # 레이트 리밋 방지 짧은 대기
+                    await asyncio.sleep(0.3) 
                 except: pass
                 finally: 
                     if g_id in created_room_messages:
@@ -181,8 +183,7 @@ async def monitor_gamelist():
                     sent_msg = await channel.send(content="🎮 **[게임 시작]**", embed=embed, delete_after=3600)
                     started_room_messages[room_host] = sent_msg
                     await asyncio.sleep(0.5) 
-                except discord.HTTPException as e:
-                    print(f"[디코드 에러] 시작 메시지 송신 실패 (속도 제한 우려): {e}")
+                except: pass
             else:
                 msg = f"💥 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 **폭파되었거나 대기실이 닫혔습니다.** ({last_slots}/12)"
                 embed = discord.Embed(description=msg, color=0xe74c3c)
@@ -191,8 +192,7 @@ async def monitor_gamelist():
                     sent_msg = await channel.send(content="💥 **[대기실 폭파]**", embed=embed, delete_after=300)
                     started_room_messages[room_host] = sent_msg
                     await asyncio.sleep(0.5) 
-                except discord.HTTPException as e:
-                    print(f"[디코드 에러] 폭파 메시지 송신 실패: {e}")
+                except: pass
 
         # [새로 파진 방 및 인원 변경 감지]
         for g_id in current_game_ids:
@@ -220,8 +220,7 @@ async def monitor_gamelist():
                     sent_msg = await channel.send(content="🆕 **[대기실 생성]**", embed=embed)
                     created_room_messages[g_id] = sent_msg
                     await asyncio.sleep(0.5) 
-                except discord.HTTPException as e:
-                    print(f"[디코드 에러] 생성 메시지 송신 실패: {e}")
+                except: pass
             
             else:
                 old_game_info = previous_games[g_id]
