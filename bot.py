@@ -3,26 +3,20 @@ import discord
 from discord.ext import tasks, commands
 import aiohttp
 from datetime import datetime, timedelta, timezone
-import threading
-from flask import Flask
 import time
 import asyncio
+from flask import Flask
 
 # ----------------- [기본 설정] -----------------
 CHANNEL_ID = 1521217489134948433  
-SEARCH_KEYWORD = "ord"  # 💡 찾고 싶은 키워드
+SEARCH_KEYWORD = "ord"  # 💡 대소문자 무관, 앞뒤 공백 자동 제거
 # ----------------------------------------------
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "FGA Bot Server is Running Fine!"
-
-def start_flask_server():
-    port = int(os.getenv("PORT", 10000))
-    # use_reloader=False를 주어 메인 프로세스를 방해하지 않음
-    app.run(host='0.0.0.0', port=port, threaded=True, use_reloader=False)
+    return "FGA Bot Status: Online and Stable"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -39,19 +33,19 @@ def get_now_strings():
 
 @bot.event
 async def on_ready():
-    print(f"⚙️ [구동 완료] {bot.user.name} 봇이 로그인되었습니다.")
+    # 💡 이제 스레드 락이 없으므로 이 로그가 무조건 찍힙니다!
+    print(f"⚙️ [구동 성공] {bot.user.name} 봇이 완전히 로드되었습니다.")
     
-    # 💡 [안전 장치] 비동기 루프가 확실히 실행된 후(on_ready) 스캔 루프를 시작합니다.
     if not monitor_gamelist.is_running():
         monitor_gamelist.start()
-        print("[시스템] 대기실 스캔 루프 가동 시작.")
+        print("[시스템] 대기실 스캔 루프 기동 완료.")
         
     channel = bot.get_channel(CHANNEL_ID)
     if channel:
         text_time, _ = get_now_strings()
         embed = discord.Embed(
-            title="🔄 FGA 모니터링 시작",
-            description=f"• 감시 키워드: **{SEARCH_KEYWORD}**\n• 에러 복구 및 정상 스캔 모드 가동",
+            title="🔄 FGA 모니터링 시작 (엔진 정상화)",
+            description=f"• 감시 키워드: **{SEARCH_KEYWORD}**\n• 단일 비동기 코어 전환 완료 🚀",
             color=0x2ecc71
         )
         await channel.send(embed=embed)
@@ -67,7 +61,6 @@ async def monitor_gamelist():
     if not channel:
         return
 
-    # 💡 둘 다 테스트해볼 수 있도록 기본 주소로 복귀 (안되면 /war3/gamelist로 교체 가능)
     url = "https://api.wc3stats.com/gamelist"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -76,11 +69,10 @@ async def monitor_gamelist():
     try:
         timeout = aiohttp.ClientTimeout(total=5)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            # 캐시 방지 타임스탬프 추가
             target_url = f"{url}?t={int(time.time())}"
             async with session.get(target_url, headers=headers) as response:
                 if response.status != 200:
-                    print(f"[로그] API 서버 에러 코드: {response.status}")
+                    print(f"[로그] API 에러: {response.status}")
                     return
 
                 data = await response.json()
@@ -97,7 +89,6 @@ async def monitor_gamelist():
                     name = str(game.get('name', '')).strip()
                     map_name = str(game.get('map', '')).strip()
                     
-                    # 대소문자 구분 없이 매칭 검사 (키워드가 비어있으면 전체 검색)
                     if not target_keyword or (target_keyword in name.lower()) or (target_keyword in map_name.lower()):
                         host = game.get('host', 'unknown')
                         game_id = f"{host}_{name}"
@@ -127,27 +118,35 @@ async def monitor_gamelist():
                         created_room_messages[g_id] = sent_msg
                         await asyncio.sleep(0.2)
 
-                # [종료/시작된 방 삭제]
+                # [종료된 방 삭제]
                 started_games = previous_game_ids - current_game_ids
                 for g_id in started_games:
                     if g_id in created_room_messages:
-                        try:
-                            await created_room_messages[g_id].delete()
-                        except:
-                            pass
-                        finally:
-                            del created_room_messages[g_id]
+                        try: await created_room_messages[g_id].delete()
+                        except: pass
+                        finally: del created_room_messages[g_id]
 
                 previous_games = current_games
                 
     except Exception as e:
-        print(f"[스캔 내부 오류]: {e}")
+        print(f"[스캔 오류]: {e}")
+
+# 💡 [구조 혁신] Flask 웹서버를 비동기 루프 내에서 가볍게 실행하는 방식
+async def run_flask():
+    from werkzeug.serving import make_server
+    port = int(os.getenv("PORT", 10000))
+    # Flask 서버를 비동기 이벤트 루프 방해 없이 완전히 녹여냄
+    server = make_server('0.0.0.0', port, app)
+    loop = asyncio.get_event_loop()
+    print("▶ [웹 서버] 비동기 포트 바인딩 완료 (Port 10000)")
+    await loop.run_in_executor(None, server.serve_forever)
+
+async def main():
+    # Flask와 디스코드를 단일 비동기 루프에서 동시에 실행
+    await asyncio.gather(
+        bot.start(TOKEN),
+        run_flask()
+    )
 
 if __name__ == "__main__":
-    # 1. 웹 서버(Flask)를 단순 백그라운드 스레드로 실행 (독점 방지)
-    flask_thread = threading.Thread(target=start_flask_server)
-    flask_thread.daemon = True
-    flask_thread.start()
-    
-    # 2. 메인 스레드는 오직 디스코드 비동기 엔진 구동에만 전념
-    bot.run(TOKEN)
+    asyncio.run(main()
