@@ -105,7 +105,7 @@ async def monitor_gamelist():
         if not isinstance(games, list):
             return
 
-        print(f"[디버그 API] 전체 방: {len(games)}개 감지")
+       print(f"[디버그 진짜 데이터 모양]: {data if i < 1 else str(data)[:500]}")
 
         current_games = {}
         keyword = SEARCH_KEYWORD.lower()
