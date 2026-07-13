@@ -38,7 +38,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 TOKEN = os.getenv("TOKEN")          
-SEARCH_KEYWORD = "ord"  # ✨ 키워드 원복완료! 방제목/맵이름에 이 단어가 있어야 감지합니다.
+SEARCH_KEYWORD = ""  # ✨ 키워드 원복완료! 방제목/맵이름에 이 단어가 있어야 감지합니다.
 
 previous_games = {} 
 is_first_run = True  # ✨ 장부 유지 메커니즘 복구 (이게 있어야 시작/폭파 감지가 가능합니다)
