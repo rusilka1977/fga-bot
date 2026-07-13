@@ -21,25 +21,24 @@ def home():
 
 def run_flask():
     port = int(os.getenv("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    # Render 환경에서 Flask가 차단되지 않도록 조치
+    app.run(host='0.0.0.0', port=port, use_reloader=False, threaded=True)
 
 import requests
 def keep_alive_ping():
-    time.sleep(20)
+    time.sleep(30) # Flask가 완전히 켜진 후 핑 시작
     url = f"https://{RENDER_APP_NAME}.onrender.com/"
     while True:
         try:
-            res = requests.get(url)
+            res = requests.get(url, timeout=5)
             print(f"[Self-Ping] 서버 생존 신호 전송 완료. 상태코드: {res.status_code}")
         except Exception as e:
             print(f"[Self-Ping] 에러 발생 (무시 가능): {e}")
         time.sleep(600)
 # ------------------------------------------------------------------------
 
-# [조치 1] 게이트웨이 먹통 방지를 위해 인텐트 설정 강화 (기본 + 메시지 + 멤버)
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True 
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -58,16 +57,15 @@ def get_now_strings():
     text_time = now.strftime('%Y-%m-%d %H:%M:%S')
     return text_time, now
 
-# [조치 2] on_ready의 블로킹을 방지하기 위해 봇 로드 단계에서 루프를 미리 실행
 @bot.event
 async def setup_hook():
-    print("⚙️ [시스템] 봇 설정 훅 로드 중... 루프 스케줄을 예약합니다.")
+    print("⚙️ [시스템] 봇 설정 훅 로드 완료. 루프 스케줄을 예약합니다.")
     monitor_gamelist.start()
 
 @bot.event
 async def on_ready():
     print("=========================================")
-    print(f"✅ [로그인 완료] {bot.user.name} 봇이 활성화되었습니다!")
+    print(f"✅ [로그인 성공] {bot.user.name} 봇이 활성화되었습니다!")
     print("=========================================")
     
     channel = bot.get_channel(CHANNEL_ID)
@@ -82,16 +80,14 @@ async def on_ready():
             embed.set_footer(text=f"가동 시각: {text_time}")
             await channel.send(embed=embed)
         except Exception as e:
-            print(f"[오류] 로그인 채널 알림 발송 실패: {e}")
+            print(f"[오류] 로그인 알림 발송 실패: {e}")
 
 @tasks.loop(seconds=10)
 async def monitor_gamelist():
     global previous_games, is_first_run
     global created_room_messages, started_room_messages
     
-    # 봇이 완전히 준비될 때까지 안전하게 대기
     await bot.wait_until_ready()
-    
     channel = bot.get_channel(CHANNEL_ID)
     if not channel:
         return
@@ -104,14 +100,13 @@ async def monitor_gamelist():
     }
 
     try:
-        # [조치 3] 통신 지연으로 인한 멈춤을 완벽 차단하기 위해 5초 엄격 타임아웃 지정
         timeout = aiohttp.ClientTimeout(total=5)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url, headers=headers) as response:
                 res_text = await response.text()
                 
                 if "challenge-platform" in res_text or response.status != 200:
-                    print(f"[경고] API 서버 통신 실패 (Cloudflare 우회 불가 혹은 점검). 상태코드: {response.status}")
+                    print(f"[경고] API 서버 통신 실패 (상태코드: {response.status})")
                     return
 
                 data = await response.json()
@@ -145,7 +140,7 @@ async def monitor_gamelist():
         if is_first_run:
             previous_games = current_games
             is_first_run = False
-            print(f"★ [성공] 모니터링 기준점이 설정되었습니다. (현재 탐색된 방: {len(current_games)}개)")
+            print(f"★ [성공] 모니터링 기준점이 설정되었습니다. (현재 방 개수: {len(current_games)}개)")
             return
 
         # [사라진 방 감지]
@@ -159,7 +154,7 @@ async def monitor_gamelist():
             if g_id in created_room_messages:
                 try: 
                     await created_room_messages[g_id].delete()
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(0.5)
                 except: pass
                 finally: 
                     if g_id in created_room_messages:
@@ -173,7 +168,7 @@ async def monitor_gamelist():
             if room_host in started_room_messages:
                 try:
                     await started_room_messages[room_host].delete()
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(0.5)
                 except: pass
                 finally:
                     if room_host in started_room_messages:
@@ -188,7 +183,6 @@ async def monitor_gamelist():
                 try: 
                     sent_msg = await channel.send(content="🎮 **[게임 시작]**", embed=embed, delete_after=3600)
                     started_room_messages[room_host] = sent_msg
-                    await asyncio.sleep(1.0)
                 except: pass
             else:
                 msg = f"💥 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 **폭파되었거나 대기실이 닫혔습니다.** ({last_slots}/12)"
@@ -197,7 +191,6 @@ async def monitor_gamelist():
                 try: 
                     sent_msg = await channel.send(content="💥 **[대기실 폭파]**", embed=embed, delete_after=300)
                     started_room_messages[room_host] = sent_msg
-                    await asyncio.sleep(1.0)
                 except: pass
 
         # [새로 파진 방 및 인원 변경 감지]
@@ -214,7 +207,7 @@ async def monitor_gamelist():
                 if room_host in started_room_messages:
                     try:
                         await started_room_messages[room_host].delete()
-                        await asyncio.sleep(1.0)
+                        await asyncio.sleep(0.5)
                     except: pass
                     finally:
                         if room_host in started_room_messages:
@@ -225,7 +218,6 @@ async def monitor_gamelist():
                 try: 
                     sent_msg = await channel.send(content="🆕 **[대기실 생성]**", embed=embed)
                     created_room_messages[g_id] = sent_msg
-                    await asyncio.sleep(1.0)
                 except: pass
             
             else:
@@ -235,19 +227,19 @@ async def monitor_gamelist():
                         try:
                             new_embed = discord.Embed(title="🆕 새 대기실 생성!", description=f"**방 제목:** {name}\n• 맵: `{game_info['map']}`\n• 방장: {room_host} (**{current}**/{max_slots})", color=0x2ecc71)
                             new_embed.set_footer(text=f"인원 갱신: {text_time} (실시간 동기화)")
-                            
                             await created_room_messages[g_id].edit(content="🆕 **[대기실 생성]**", embed=new_embed)
-                            await asyncio.sleep(1.0)
                         except: pass
 
         previous_games = current_games
         
     except asyncio.TimeoutError:
-        print("[타임아웃] API 서버가 5초 이내에 응답하지 않아 다음 주기로 패스합니다.")
+        print("[타임아웃] API 서버 응답 지연 발생.")
     except Exception as e:
         print(f"[루프 내 예외 발생]: {e}")
 
-if __name__ == "__main__":
+# 메인 비동기 실행 루프
+async def main():
+    # Flask를 백그라운드 스레드에서 먼저 실행
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
@@ -256,4 +248,9 @@ if __name__ == "__main__":
     ping_thread.daemon = True
     ping_thread.start()
     
-    bot.run(TOKEN)
+    # 디스코드 봇을 비동기식으로 실행 (프로세스 락 방지)
+    async with bot:
+        await bot.start(TOKEN)
+
+if __name__ == "__main__":
+    asyncio.run(main())
