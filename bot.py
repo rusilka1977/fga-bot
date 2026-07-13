@@ -21,19 +21,19 @@ def home():
 
 def run_flask():
     port = int(os.getenv("PORT", 10000))
-    # Render 환경에서 Flask가 차단되지 않도록 조치
     app.run(host='0.0.0.0', port=port, use_reloader=False, threaded=True)
 
 import requests
 def keep_alive_ping():
-    time.sleep(30) # Flask가 완전히 켜진 후 핑 시작
+    time.sleep(30)
     url = f"https://{RENDER_APP_NAME}.onrender.com/"
     while True:
         try:
             res = requests.get(url, timeout=5)
-            print(f"[Self-Ping] 서버 생존 신호 전송 완료. 상태코드: {res.status_code}")
+            # print 버퍼 강제 비우기(flush=True) 적용
+            print(f"[Self-Ping] 서버 생존 신호 전송 완료. 상태코드: {res.status_code}", flush=True)
         except Exception as e:
-            print(f"[Self-Ping] 에러 발생 (무시 가능): {e}")
+            print(f"[Self-Ping] 에러 발생 (무시 가능): {e}", flush=True)
         time.sleep(600)
 # ------------------------------------------------------------------------
 
@@ -59,14 +59,14 @@ def get_now_strings():
 
 @bot.event
 async def setup_hook():
-    print("⚙️ [시스템] 봇 설정 훅 로드 완료. 루프 스케줄을 예약합니다.")
+    print("⚙️ [시스템] 봇 설정 훅 로드 완료. 루프 스케줄을 예약합니다.", flush=True)
     monitor_gamelist.start()
 
 @bot.event
 async def on_ready():
-    print("=========================================")
-    print(f"✅ [로그인 성공] {bot.user.name} 봇이 활성화되었습니다!")
-    print("=========================================")
+    print("=========================================", flush=True)
+    print(f"✅ [로그인 성공] {bot.user.name} 봇이 활성화되었습니다!", flush=True)
+    print("=========================================", flush=True)
     
     channel = bot.get_channel(CHANNEL_ID)
     if channel:
@@ -74,13 +74,13 @@ async def on_ready():
         try:
             embed = discord.Embed(
                 title="🤖 FGA 모니터링 가동",
-                description="• 대기실 스캔 주기: **10초**\n• 실시간 인원 동기화 🔄",
+                description="• 대기실 스캔 주기: **10초**\n• 실시간 인원 동기화 🔄\n\n⚠️ *만약 API 서버에서 봇을 차단하면 여기에 경고가 실시간으로 표시됩니다.*",
                 color=0x2ecc71
             )
             embed.set_footer(text=f"가동 시각: {text_time}")
             await channel.send(embed=embed)
         except Exception as e:
-            print(f"[오류] 로그인 알림 발송 실패: {e}")
+            print(f"[오류] 로그인 알림 발송 실패: {e}", flush=True)
 
 @tasks.loop(seconds=10)
 async def monitor_gamelist():
@@ -93,10 +93,14 @@ async def monitor_gamelist():
         return
 
     url = "https://api.wc3stats.com/gamelist"
+    
+    # Cloudflare가 봇으로 인식하지 못하도록 헤더 전면 강화
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://wc3stats.com/games",
+        "Origin": "https://wc3stats.com"
     }
 
     try:
@@ -105,8 +109,14 @@ async def monitor_gamelist():
             async with session.get(url, headers=headers) as response:
                 res_text = await response.text()
                 
+                # 차단 감지 시 디스코드 채널에 즉시 경고 전송
                 if "challenge-platform" in res_text or response.status != 200:
-                    print(f"[경고] API 서버 통신 실패 (상태코드: {response.status})")
+                    print(f"[경고] API 서버 통신 실패 (상태코드: {response.status})", flush=True)
+                    text_time, _ = get_now_strings()
+                    
+                    # 5분에 한 번씩만 디코로 에러 경고를 보내 채널 도배 방지
+                    if int(time.time()) % 300 < 10:
+                        await channel.send(f"⚠️ **[API 서버 통신 차단 감지]**\n현재 wc3stats 서버가 Cloudflare 보안 장벽을 강화하여 봇의 접근을 막고 있습니다.\n• 상태 코드: `{response.status}`\n• 확인 시각: `{text_time}`")
                     return
 
                 data = await response.json()
@@ -140,7 +150,9 @@ async def monitor_gamelist():
         if is_first_run:
             previous_games = current_games
             is_first_run = False
-            print(f"★ [성공] 모니터링 기준점이 설정되었습니다. (현재 방 개수: {len(current_games)}개)")
+            print(f"★ [성공] 모니터링 기준점이 설정되었습니다. (현재 방 개수: {len(current_games)}개)", flush=True)
+            # 기준점이 잡혔다는 것을 디코 채널에도 피드백
+            await channel.send(f"🔍 **[스캔 시작]** 현재 조건에 맞는 방 `{len(current_games)}개`를 탐지하여 추적 장부에 등록했습니다. 지금부터 신규 방을 감시합니다.")
             return
 
         # [사라진 방 감지]
@@ -233,13 +245,11 @@ async def monitor_gamelist():
         previous_games = current_games
         
     except asyncio.TimeoutError:
-        print("[타임아웃] API 서버 응답 지연 발생.")
+        print("[타임아웃] API 서버 응답 지연 발생.", flush=True)
     except Exception as e:
-        print(f"[루프 내 예외 발생]: {e}")
+        print(f"[루프 내 예외 발생]: {e}", flush=True)
 
-# 메인 비동기 실행 루프
 async def main():
-    # Flask를 백그라운드 스레드에서 먼저 실행
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
@@ -248,7 +258,6 @@ async def main():
     ping_thread.daemon = True
     ping_thread.start()
     
-    # 디스코드 봇을 비동기식으로 실행 (프로세스 락 방지)
     async with bot:
         await bot.start(TOKEN)
 
