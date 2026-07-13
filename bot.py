@@ -38,7 +38,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 TOKEN = os.getenv("TOKEN")          
-SEARCH_KEYWORD = ""  # 우선 모든 방을 다 긁어오도록 비워둡니다.
+SEARCH_KEYWORD = "fatega"  # 우선 모든 방을 다 긁어오도록 비워둡니다.
 
 previous_games = {} 
 
