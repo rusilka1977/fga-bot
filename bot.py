@@ -20,9 +20,11 @@ app = Flask(__name__)
 def home():
     return "Bot is running perfectly!"
 
-def run_flask():
+# 💡 [구조 변경] Flask 웹 서버가 독립적으로 돌아가도록 완벽히 분리
+def start_flask_server():
     port = int(os.getenv("PORT", 10000))
-    app.run(host='0.0.0.0', port=port, threaded=True)
+    # Flask 내부에서 일어나는 신호가 메인 비동기 루프를 건들지 못하게 제한
+    app.run(host='0.0.0.0', port=port, threaded=True, use_reloader=False)
 
 def keep_alive_ping():
     time.sleep(30)
@@ -32,7 +34,7 @@ def keep_alive_ping():
             res = requests.get(url, timeout=5)
             print(f"[Self-Ping] 서버 생존 신호 전송 완료. 상태코드: {res.status_code}")
         except Exception as e:
-            print(f"[Self-Ping] 에러 발생 (무시 가능): {e}")
+            pass
         time.sleep(600)
 # ------------------------------------------------------------------------
 
@@ -63,7 +65,7 @@ async def on_ready():
         try:
             embed = discord.Embed(
                 title="🤖 FGA 모니터링 가동",
-                description="• 대기실 스캔 주기: **10초**\n• 실시간 인원 동기화 🔄\n• 하위 경로 우회 패치 완료 🚀",
+                description="• 대기실 스캔 주기: **10초**\n• 실시간 인원 동기화 🔄\n• 멀티스레드 격리 부스터 가동 ⚡",
                 color=0x2ecc71
             )
             embed.set_footer(text=f"가동 시각: {text_time}")
@@ -86,22 +88,18 @@ async def monitor_gamelist():
     if not channel:
         return
 
-    # 💡 [핵심 패치] 주소 뒤에 파라미터를 붙이는 대신, 랜덤 숫자를 조합한 가짜 헤더와 주소로 캐시를 완벽히 격파합니다.
     url = "https://api.wc3stats.com/gamelist"
     rand_val = random.randint(100000, 999999)
     headers = {
         "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.{rand_val} Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache",
-        "Expires": "0",
-        "If-Modified-Since": "Mon, 26 Jul 1997 05:00:00 GMT"
+        "Pragma": "no-cache"
     }
 
     try:
         loop = asyncio.get_event_loop()
-        # 주소 뒤에 랜덤 변수를 한 번 더 결합
-        target_url = f"{url}?cachebreaker={rand_val}&t={int(time.time())}"
+        target_url = f"{url}?t={int(time.time())}"
         response = await loop.run_in_executor(None, lambda: requests.get(target_url, headers=headers, timeout=5))
         
         if response.status_code != 200 or "challenge-platform" in response.text:
@@ -138,11 +136,10 @@ async def monitor_gamelist():
         current_game_ids = set(current_games.keys())
         previous_game_ids = set(previous_games.keys())
 
-        # 최초 실행 시, 감지된 방들을 디코방에 바로 뿌려주기 위해 초기 차단 해제
         if is_first_run:
             previous_games = current_games
             is_first_run = False
-            print(f"[디버그] 초기 기준점 {len(current_games)}개 등록 및 첫 스캔 완료.")
+            print(f"[디버그] 초기 기준점 {len(current_games)}개 등록 완료.")
 
         # [방 퇴장/시작/폭파 감지]
         started_games = previous_game_ids - current_game_ids
@@ -226,27 +223,20 @@ async def monitor_gamelist():
     except Exception as e:
         print(f"[루프 내 예외 발생]: {e}")
 
-async def start_bot_safely():
+async def main_start():
     monitor_gamelist.start()
-    for i in range(3):
-        try:
-            print(f"[디스코드] 연결 시도 중... ({i+1}/3)")
-            await bot.start(TOKEN)
-            break
-        except Exception as e:
-            print(f"[디스코드 에러] 연결 실패, 10초 후 재시도: {e}")
-            await asyncio.sleep(10)
+    await bot.start(TOKEN)
 
 if __name__ == "__main__":
-    flask_thread = threading.Thread(target=run_flask)
+    # 1. Flask 서버를 메인 루프와 완전히 다른 물리 스레드로 격리하여 실행
+    flask_thread = threading.Thread(target=start_flask_server)
     flask_thread.daemon = True
     flask_thread.start()
     
+    # 2. 킵 얼라이브 핑 스레드 실행
     ping_thread = threading.Thread(target=keep_alive_ping)
     ping_thread.daemon = True
     ping_thread.start()
     
-    try:
-        asyncio.run(start_bot_safely())
-    except KeyboardInterrupt:
-        print("봇이 수동 종료되었습니다.")
+    # 3. 디스코드 비동기 엔진 독점 구동
+    asyncio.run(main_start())
