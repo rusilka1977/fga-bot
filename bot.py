@@ -38,10 +38,9 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 TOKEN = os.getenv("TOKEN")          
-SEARCH_KEYWORD = ""  # ✨ 키워드 원복완료! 방제목/맵이름에 이 단어가 있어야 감지합니다.
+SEARCH_KEYWORD = "ord"  # 우선 모든 방을 다 긁어오도록 비워둡니다.
 
 previous_games = {} 
-is_first_run = True  # ✨ 장부 유지 메커니즘 복구 (이게 있어야 시작/폭파 감지가 가능합니다)
 
 created_room_messages = {}     
 started_room_messages = {}     
@@ -54,7 +53,7 @@ def get_now_strings():
 
 @bot.event
 async def on_ready():
-    print(f"[{bot.user.name}] 로그인 성공!")
+    print(f"[{bot.user.name}] 로그인 성공! 디스코드 채널로 가동 알림을 보냅니다.")
     channel = bot.get_channel(CHANNEL_ID)
     if channel:
         text_time, _ = get_now_strings()
@@ -67,16 +66,17 @@ async def on_ready():
             embed.set_footer(text=f"가동 시각: {text_time}")
             await channel.send(embed=embed)
         except Exception as e:
-            print(f"[디코 에러] {e}")
+            print(f"[디코 발송 에러] 인사말 전송 실패: {e}")
             
     monitor_gamelist.start()
 
 @tasks.loop(seconds=10)
 async def monitor_gamelist():
-    global previous_games, is_first_run
+    global previous_games
     global created_room_messages, started_room_messages
     channel = bot.get_channel(CHANNEL_ID)
     if not channel:
+        print("[경고] 지정된 CHANNEL_ID 채널을 찾을 수 없습니다.")
         return
 
     url = "https://api.wc3stats.com/gamelist"
@@ -84,24 +84,32 @@ async def monitor_gamelist():
 
     try:
         response = requests.get(url, headers=headers, timeout=5)
+        
+        # 🔍 렌더 로그 진단 1단계: API 연결 상태 확인
         if response.status_code != 200:
+            print(f"[API 에러] wc3stats 서버 상태 이상 (코드: {response.status_code})")
             return
 
         data = response.json()
         games = data.get('body', [])
-        if not isinstance(games, list):
-            return
+        
+        # 🔍 렌더 로그 진단 2단계: 가져온 총 방 개수 출력
+        print(f"📡 [API 스캔] 현재 워3 전체 대기실 개수: {len(games)}개 추출됨")
 
         current_games = {}
         keyword = SEARCH_KEYWORD.lower()
+        my_room_found = False
 
         for game in games:
             if not isinstance(game, dict):
                 continue
             name = game.get('name', '')
             map_name = game.get('map', '')
-            if not keyword or keyword in name.lower() or keyword in map_name.lower():
-                host = game.get('host', 'unknown')
+            host = game.get('host', 'unknown')
+            
+            # 🔍 렌더 로그 진단 3단계: 내 방이 목록에 진짜 존재하는지 감지
+            # 본인 디스코드 배틀넷 태그나 방 제목 일부를 로그에서 확인하기 위함
+            if keyword in name.lower() or keyword in map_name.lower():
                 game_id = f"{host}_{name}"
                 current_games[game_id] = {
                     'name': name,
@@ -110,18 +118,15 @@ async def monitor_gamelist():
                     'current_slots': game.get('slotsTaken', 0),
                     'max_slots': game.get('slotsTotal', 0)
                 }
+                my_room_found = True
+
+        if len(games) > 0 and not my_room_found:
+            print("ℹ️ [스캔 중] API가 살아있으나, 목록에 유저님이 만든 방은 보이지 않습니다. (API 반영 딜레이 가능성)")
 
         current_game_ids = set(current_games.keys())
         previous_game_ids = set(previous_games.keys())
 
-        # 봇이 최초 구동될 때 기존 방 목록을 안전하게 기억 장부에 등록합니다.
-        if is_first_run:
-            previous_games = current_games
-            is_first_run = False
-            print("★ [성공] 모니터링 장부 세팅 완료. 이제부터 실시간 감지를 시작합니다.")
-            return
-
-        # [사라진 방 감지] -> 시작 / 폭파 판단 로직
+        # [사라진 방 감지]
         started_games = previous_game_ids - current_game_ids
         for g_id in started_games:
             old_game_info = previous_games[g_id]
@@ -138,7 +143,6 @@ async def monitor_gamelist():
                     if g_id in created_room_messages:
                         del created_room_messages[g_id]
             
-            # 0명 버그 유령방 원천 차단
             if last_slots <= 0:
                 if room_host in started_room_messages:
                     del started_room_messages[room_host]
@@ -155,7 +159,6 @@ async def monitor_gamelist():
             
             text_time, _ = get_now_strings()
             
-            # 10명 이상인 상태에서 사라지면 시작 인정
             if last_slots >= 10:
                 msg = f"🎮 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 게임을 시작했습니다! ({last_slots}/12)"
                 embed = discord.Embed(description=msg, color=0x3498db)
@@ -200,8 +203,10 @@ async def monitor_gamelist():
                 try: 
                     sent_msg = await channel.send(content="🆕 **[대기실 생성]**", embed=embed)
                     created_room_messages[g_id] = sent_msg
+                    print(f" [디코 전송 성공] 새 방 감지: {name} ({current}/{max_slots})")
                     await asyncio.sleep(1.0)
-                except: pass
+                except Exception as e:
+                    print(f"[디코 전송 실패] 방은 감지했으나 디코로 메시지 전송 불가: {e}")
             
             else:
                 old_game_info = previous_games[g_id]
@@ -218,7 +223,7 @@ async def monitor_gamelist():
         previous_games = current_games
         
     except Exception as e:
-        print(f"[루프 내 예외 발생]: {e}")
+        print(f"[루프 내 치명적 예외 발생]: {e}")
 
 if __name__ == "__main__":
     flask_thread = threading.Thread(target=run_flask)
