@@ -50,9 +50,18 @@ created_room_messages = {}     # 대기실(초록) 메시지 저장용 {g_id: me
 started_room_messages = {}     # 시작(파란)/폭파(빨간) 메시지 저장용 {room_host: message_obj}
 
 def get_now_strings():
+    """년도와 날짜를 지우고 한국어 '오전/오후 XX시 XX분 XX초' 형태로 반환합니다."""
     kst = timezone(timedelta(hours=9))
     now = datetime.now(kst)
-    text_time = now.strftime('%Y-%m-%d %H:%M:%S')
+    
+    # 오전/오후 구분 및 12시간제 시간 계산
+    ampm = "오전" if now.hour < 12 else "오후"
+    hour_12 = now.hour if now.hour <= 12 else now.hour - 12
+    if hour_12 == 0:
+        hour_12 = 12 # 0시는 오전 12시로 표기
+        
+    # 두 자릿수 포맷팅 (예: 03시)
+    text_time = f"{ampm} {hour_12:02d}시 {now.minute:02d}분 {now.second:02d}초"
     return text_time, now
 
 @bot.event
@@ -74,7 +83,7 @@ async def on_ready():
             
     monitor_gamelist.start()
 
-@tasks.loop(seconds=10)
+@tasks.loop(seconds=8)
 async def monitor_gamelist():
     global previous_games, is_first_run
     global created_room_messages, started_room_messages
@@ -161,21 +170,17 @@ async def monitor_gamelist():
             
             # 3. 시작/폭파 메시지 전송 및 장부 등록
             if last_slots >= 10:
-                msg = f"🎮 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 게임을 시작했습니다! ({last_slots}/12)"
+                msg = f"• **방장:** {room_host}\n• **제목:** {clean_name}\n• **시작 시간:** {text_time} `(1시간 후 자동 삭제)`"
                 embed = discord.Embed(description=msg, color=0x3498db)
-                embed.set_footer(text=f"시작 시각: {text_time} (1시간 후 자동 삭제)")
                 try: 
-                    # 렌더링 시인성 확보를 위해 상단 텍스트를 단정하게 변경
                     sent_msg = await channel.send(content="🎮 **[게임 시작]**", embed=embed, delete_after=3600)
                     started_room_messages[room_host] = sent_msg
                     await asyncio.sleep(1.0) # 1.0초 안전 마진
                 except: pass
             else:
-                msg = f"💥 **[방장: {room_host}]**님의 **[{clean_name}]** 방이 **폭파되었거나 대기실이 닫혔습니다.** ({last_slots}/12)"
+                msg = f"• **방장:** {room_host}\n• **제목:** {clean_name}\n• **폭파 시간:** {text_time} `(5분 후 자동 삭제)`"
                 embed = discord.Embed(description=msg, color=0xe74c3c)
-                embed.set_footer(text=f"폭파 시각: {text_time} (5분 후 자동 삭제)")
                 try: 
-                    # 렌더링 시인성 확보를 위해 상단 텍스트를 단정하게 변경
                     sent_msg = await channel.send(content="💥 **[대기실 폭파]**", embed=embed, delete_after=300)
                     started_room_messages[room_host] = sent_msg
                     await asyncio.sleep(1.0) # 1.0초 안전 마진
@@ -192,7 +197,6 @@ async def monitor_gamelist():
             text_time, now_obj = get_now_strings()
             
             if g_id not in previous_game_ids:
-                # 새 대기실을 파는 순간에도 이전 메시지 삭제
                 if room_host in started_room_messages:
                     try:
                         await started_room_messages[room_host].delete()
@@ -205,14 +209,12 @@ async def monitor_gamelist():
                 embed = discord.Embed(title="🆕 새 대기실 생성!", description=f"**방 제목:** {name}\n• 맵: `{game_info['map']}`\n• 방장: {room_host} ({current}/{max_slots})", color=0x2ecc71)
                 embed.set_footer(text=f"생성 시각: {text_time} (실시간 동기화)")
                 try: 
-                    # 상단 텍스트에 한 단축 태그 추가
                     sent_msg = await channel.send(content="🆕 **[대기실 생성]**", embed=embed)
                     created_room_messages[g_id] = sent_msg
                     await asyncio.sleep(1.0) # 1.0초 안전 마진
                 except: pass
             
             else:
-                # 대기실 인원 실시간 업데이트
                 old_game_info = previous_games[g_id]
                 if old_game_info['current_slots'] != current:
                     if g_id in created_room_messages:
@@ -220,7 +222,6 @@ async def monitor_gamelist():
                             new_embed = discord.Embed(title="🆕 새 대기실 생성!", description=f"**방 제목:** {name}\n• 맵: `{game_info['map']}`\n• 방장: {room_host} (**{current}**/{max_slots})", color=0x2ecc71)
                             new_embed.set_footer(text=f"인원 갱신: {text_time} (실시간 동기화)")
                             
-                            # 수정할 때도 상단 한 단축 태그 유지
                             await created_room_messages[g_id].edit(content="🆕 **[대기실 생성]**", embed=new_embed)
                             await asyncio.sleep(1.0) # 1.0초 안전 마진
                         except: pass
