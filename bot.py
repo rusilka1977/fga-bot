@@ -1,7 +1,7 @@
 import os
 import discord
 from discord.ext import tasks, commands
-import requests
+import aiohttp  # requests 대신 비동기 라이브러리 사용!
 from datetime import datetime, timedelta, timezone
 import threading
 from flask import Flask
@@ -23,12 +23,14 @@ def run_flask():
     port = int(os.getenv("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
+# 렌더의 핑도 비동기로 처리할 수 있지만, 기존 스레드 방식을 그대로 안전하게 유지합니다.
 def keep_alive_ping():
+    import requests  # 스레드 내부용 임시 import
     time.sleep(20)
     url = f"https://{RENDER_APP_NAME}.onrender.com/"
     while True:
         try:
-            res = requests.get(url)
+            res = requests.get(url, timeout=5)
             print(f"[Self-Ping] 서버 생존 신호 전송 완료. 상태코드: {res.status_code}")
         except Exception as e:
             print(f"[Self-Ping] 에러 발생 (무시 가능): {e}")
@@ -99,13 +101,22 @@ async def monitor_gamelist():
     }
 
     try:
-        response = requests.get(url, headers=headers, timeout=5)
-        
-        if "challenge-platform" in response.text or response.status_code != 200:
-            print(f"[경고] API 서버 통신 실패(Cloudflare 또는 점검). 대기실 장부를 유지합니다.")
-            return
+        # 비동기(aiohttp) 세션을 사용해 봇이 멈추지 않게 요청을 보냅니다.
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+            async with session.get(url) as response:
+                
+                if response.status != 200:
+                    print(f"[경고] API 서버 통신 실패(상태코드: {response.status}). 대기실 장부를 유지합니다.")
+                    return
+                
+                response_text = await response.text()
+                if "challenge-platform" in response_text:
+                    print(f"[경고] Cloudflare 우회 차단 감지. 대기실 장부를 유지합니다.")
+                    return
 
-        data = response.json()
+                data = await response.json()
+
         games = data.get('body', [])
         if not isinstance(games, list):
             return
@@ -228,6 +239,8 @@ async def monitor_gamelist():
 
         previous_games = current_games
         
+    except asyncio.TimeoutError:
+        print(f"[루프 내 타임아웃]: API 서버가 5초 동안 응답하지 않아 이번 턴은 패스합니다.")
     except Exception as e:
         print(f"[루프 내 예외 발생 (자동 패스)]: {e}")
 
